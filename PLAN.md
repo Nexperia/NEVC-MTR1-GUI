@@ -7,7 +7,7 @@ serial communication, and `avrdude` for firmware flashing.
 
 ---
 
-## Stage 1 — Project Foundation ✅ (current)
+## Stage 1 — Project Foundation (current)
 **Goal:** Compilable skeleton with full module structure and working tab navigation.
 
 - [x] `Cargo.toml` with all required dependencies (`iced`, `serialport`, `tokio`, `anyhow`, `serde`)
