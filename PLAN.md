@@ -60,14 +60,14 @@ serial communication, and `avrdude` for firmware flashing.
 ## Stage 4 — Live Graphing Panel
 **Goal:** Configurable live plots of selected measurements.
 
-- [ ] Variable selection (checkboxes): Speed, IBUS, IPHU, IPHV, IPHW, Duty Cycle, Voltage
-- [ ] Configurable polling frequency (1–50 Hz slider)
-- [ ] Background tokio polling task with ring-buffer history (last N seconds)
-- [ ] iced `canvas`-based live scrolling plots
+- [x] Variable selection (checkboxes): Speed, IBUS, IPHU, IPHV, IPHW, Duty Cycle, Voltage
+- [x] Configurable polling frequency (1–50 Hz slider)
+- [x] Background tokio polling task with ring-buffer history (last N seconds)
+- [x] iced `canvas`-based live scrolling plots
   - Auto-scaling Y axis
   - Time-scrolling X axis
   - Legend / axis labels
-- [ ] Start / stop polling button
+- [x] Start / stop polling button
 
 **Outcome:** Live multi-channel measurement graphs.
 

@@ -5,6 +5,50 @@ use crate::serial::{ConnectionState, PortInfo, SerialHandle};
 use crate::ui::{Panel, config, connection, firmware, graphs, log_panel, motor};
 
 // ---------------------------------------------------------------------------
+// Graph types
+// ---------------------------------------------------------------------------
+
+pub const NUM_CHANNELS: usize = 8;
+/// Short display names for each graph channel.
+pub const GRAPH_CHANNEL_NAMES: [&str; NUM_CHANNELS] = [
+    "Speed",
+    "System Current",
+    "Phase U Current",
+    "Phase V Current",
+    "Phase W Current",
+    "Duty Cycle",
+    "System Voltage",
+    "System Power",
+];
+/// SI unit string for each channel.
+pub const GRAPH_CHANNEL_UNITS: [&str; NUM_CHANNELS] =
+    ["RPM", "A", "A", "A", "A", "%", "V", "W"];
+/// Y-axis unit group index for each channel (0=RPM, 1=A, 2=%, 3=V, 4=W).
+pub const GRAPH_CHANNEL_UNIT_GROUP: [usize; NUM_CHANNELS] = [0, 1, 1, 1, 1, 2, 3, 4];
+/// Display label for each unit group.
+pub const UNIT_GROUP_NAMES: [&str; 5] = ["RPM", "A", "%", "V", "W"];
+
+#[derive(Debug, Clone)]
+pub struct GraphSample {
+    /// Seconds elapsed since polling started.
+    pub t: f32,
+    /// Absolute wall-clock time in milliseconds since UNIX epoch.
+    pub wall_time_ms: u64,
+    /// Values indexed by channel (indices per GRAPH_CHANNEL_NAMES).
+    pub values: [Option<f32>; NUM_CHANNELS],
+}
+
+// ---------------------------------------------------------------------------
+// Graph display mode
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum GraphMode {
+    Overlay,
+    Individual,
+}
+
+// ---------------------------------------------------------------------------
 // Log entry
 // ---------------------------------------------------------------------------
 
@@ -67,6 +111,14 @@ pub struct NevcApp {
 
     // Firmware panel
     pub flash_log: Vec<String>,
+
+    // Graphs panel
+    pub graph_channels: [bool; NUM_CHANNELS],
+    pub graph_poll_hz: f32,
+    pub graph_running: bool,
+    pub graph_history: std::collections::VecDeque<GraphSample>,
+    pub graph_start_secs: f64,
+    pub graph_mode: GraphMode,
 }
 
 // ---------------------------------------------------------------------------
@@ -140,6 +192,13 @@ pub enum Message {
     FlashFirmwarePressed,
     FlashLogEntry(String),
 
+    // Graphs panel
+    GraphChannelToggled(usize),
+    GraphPollRateChanged(f32),
+    GraphStartStop,
+    GraphDownloadCsv,
+    GraphModeToggled,
+
     // Generic status
     StatusMessage(String),
     ClearLog,
@@ -182,6 +241,12 @@ impl Application for NevcApp {
             flash_log: Vec::new(),
             serial_handle: None,
             log: Vec::new(),
+            graph_channels: [false; NUM_CHANNELS],
+            graph_poll_hz: 5.0,
+            graph_running: false,
+            graph_history: std::collections::VecDeque::new(),
+            graph_start_secs: 0.0,
+            graph_mode: GraphMode::Overlay,
         };
 
         // Detect COM ports immediately on startup
@@ -268,6 +333,8 @@ impl Application for NevcApp {
                 self.idn_serial = None;
                 self.motor_enabled = false;
                 self.motor_busy = false;
+                self.graph_running = false;
+                self.graph_history.clear();
                 self.speed_rpm = None;
                 self.bus_current = None;
                 self.phase_u_current = None;
@@ -596,6 +663,15 @@ impl Application for NevcApp {
                 let Some(handle) = self.serial_handle.clone() else {
                     return Command::none();
                 };
+                // Compute effective channels: power(7) requires current(1) + voltage(6)
+                let mut eff = self.graph_channels;
+                if eff[7] { eff[1] = true; eff[6] = true; }
+                // When Motor Control tab is active, poll all real measurement channels
+                // (de-duplicates naturally: graph queries are already included in eff)
+                if self.active_panel == Panel::MotorControl {
+                    for i in 0..7 { eff[i] = true; }
+                }
+                let busy = self.motor_busy;
                 Command::perform(
                     async move {
                         tokio::task::spawn_blocking(move || {
@@ -604,29 +680,37 @@ impl Application for NevcApp {
                             let pf = |r: Result<String, String>| -> Option<f32> {
                                 r.ok().and_then(|s| s.trim().parse().ok())
                             };
-                            // Probe first — if write fails the device is physically gone.
-                            let speed_result = scpi_query(&handle, commands::MEAS_SPEED);
-                            if let Err(ref e) = speed_result {
+                            // Always query direction: disconnect probe + motor panel display.
+                            let dir_result = scpi_query(&handle, commands::MEAS_DIRECTION);
+                            if let Err(ref e) = dir_result {
                                 let lower = e.to_lowercase();
                                 if lower.starts_with("write error") || lower.starts_with("read error") {
                                     return Err(format!("io:{}", e));
                                 }
                             }
-                            let speed = speed_result.ok().and_then(|s| s.trim().parse().ok());
-                            let bus_current =
-                                pf(scpi_query(&handle, commands::MEAS_CURRENT_IBUS));
-                            let phase_u =
-                                pf(scpi_query(&handle, commands::MEAS_CURRENT_IPHU));
-                            let phase_v =
-                                pf(scpi_query(&handle, commands::MEAS_CURRENT_IPHV));
-                            let phase_w =
-                                pf(scpi_query(&handle, commands::MEAS_CURRENT_IPHW));
-                            let direction = scpi_query(&handle, commands::MEAS_DIRECTION)
-                                .ok()
-                                .map(|s| s.trim().to_string());
-                            let duty_cycle =
-                                pf(scpi_query(&handle, commands::MEAS_DUTY_CYCLE));
-                            let voltage = pf(scpi_query(&handle, commands::MEAS_VOLTAGE));
+                            let direction = dir_result.ok().map(|s| s.trim().to_string());
+                            // Only query channels that are selected (or needed)
+                            let speed = if eff[0] || busy {
+                                pf(scpi_query(&handle, commands::MEAS_SPEED))
+                            } else { None };
+                            let bus_current = if eff[1] {
+                                pf(scpi_query(&handle, commands::MEAS_CURRENT_IBUS))
+                            } else { None };
+                            let phase_u = if eff[2] {
+                                pf(scpi_query(&handle, commands::MEAS_CURRENT_IPHU))
+                            } else { None };
+                            let phase_v = if eff[3] {
+                                pf(scpi_query(&handle, commands::MEAS_CURRENT_IPHV))
+                            } else { None };
+                            let phase_w = if eff[4] {
+                                pf(scpi_query(&handle, commands::MEAS_CURRENT_IPHW))
+                            } else { None };
+                            let duty_cycle = if eff[5] {
+                                pf(scpi_query(&handle, commands::MEAS_DUTY_CYCLE))
+                            } else { None };
+                            let voltage = if eff[6] {
+                                pf(scpi_query(&handle, commands::MEAS_VOLTAGE))
+                            } else { None };
                             Ok::<Message, String>(Message::MeasurementsReceived {
                                 speed,
                                 bus_current,
@@ -668,6 +752,37 @@ impl Application for NevcApp {
                 self.measured_direction = direction;
                 self.duty_cycle = duty_cycle;
                 self.gate_voltage = voltage;
+                // Record graph sample
+                if self.graph_running {
+                    let dur = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default();
+                    let wall_time_ms = dur.as_millis() as u64;
+                    let t = (dur.as_secs_f64() - self.graph_start_secs) as f32;
+                    let power = match (self.bus_current, self.gate_voltage) {
+                        (Some(i), Some(v)) if self.graph_channels[7] => Some(i * v),
+                        _ => None,
+                    };
+                    let ch = &self.graph_channels;
+                    self.graph_history.push_back(GraphSample {
+                        t,
+                        wall_time_ms,
+                        values: [
+                            if ch[0] { self.speed_rpm } else { None },
+                            if ch[1] { self.bus_current } else { None },
+                            if ch[2] { self.phase_u_current } else { None },
+                            if ch[3] { self.phase_v_current } else { None },
+                            if ch[4] { self.phase_w_current } else { None },
+                            if ch[5] { self.duty_cycle } else { None },
+                            if ch[6] { self.gate_voltage } else { None },
+                            power,
+                        ],
+                    });
+                    const MAX_SAMPLES: usize = 3_000;
+                    while self.graph_history.len() > MAX_SAMPLES {
+                        self.graph_history.pop_front();
+                    }
+                }
                 Command::none()
             }
 
@@ -743,6 +858,8 @@ impl Application for NevcApp {
                 self.idn_serial = None;
                 self.motor_enabled = false;
                 self.motor_busy = false;
+                self.graph_running = false;
+                self.graph_history.clear();
                 self.speed_rpm = None;
                 self.bus_current = None;
                 self.phase_u_current = None;
@@ -755,6 +872,98 @@ impl Application for NevcApp {
                 self.push_log(LogLevel::Error, msg.clone());
                 self.status_message = msg;
                 Command::none()
+            }
+
+            // ---- Graphs panel ----
+            Message::GraphChannelToggled(idx) => {
+                if idx < NUM_CHANNELS {
+                    self.graph_channels[idx] ^= true;
+                    // System Power (7) requires System Current (1) and System Voltage (6)
+                    if idx == 7 && self.graph_channels[7] {
+                        self.graph_channels[1] = true;
+                        self.graph_channels[6] = true;
+                    }
+                }
+                Command::none()
+            }
+            Message::GraphPollRateChanged(hz) => {
+                self.graph_poll_hz = hz;
+                Command::none()
+            }
+            Message::GraphStartStop => {
+                if self.graph_running {
+                    self.graph_running = false;
+                } else {
+                    self.graph_running = true;
+                    self.graph_history.clear();
+                    self.graph_start_secs = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs_f64();
+                }
+                Command::none()
+            }
+            Message::GraphModeToggled => {
+                self.graph_mode = match self.graph_mode {
+                    GraphMode::Overlay => GraphMode::Individual,
+                    GraphMode::Individual => GraphMode::Overlay,
+                };
+                Command::none()
+            }
+            Message::GraphDownloadCsv => {
+                if self.graph_history.is_empty() {
+                    self.status_message = String::from("No data to export.");
+                    return Command::none();
+                }
+                let history = self.graph_history.clone();
+                Command::perform(
+                    async move {
+                        use std::fmt::Write as FmtWrite;
+
+                        // Build CSV with snake_case headers
+                        let mut csv = String::new();
+                        writeln!(
+                            csv,
+                            "wall_time_ms,t_s,speed_rpm,system_current_a,\
+                             phase_u_current_a,phase_v_current_a,phase_w_current_a,\
+                             duty_cycle_pct,system_voltage_v,system_power_w"
+                        ).unwrap();
+                        for sample in &history {
+                            write!(csv, "{},{:.4}", sample.wall_time_ms, sample.t).unwrap();
+                            for v in &sample.values {
+                                match v {
+                                    Some(f) => write!(csv, ",{:.6}", f).unwrap(),
+                                    None => write!(csv, ",").unwrap(),
+                                }
+                            }
+                            writeln!(csv).unwrap();
+                        }
+
+                        // Show native save-file dialog
+                        let ts = history.front().map(|s| s.wall_time_ms).unwrap_or(0);
+                        let default_name = format!("nevc_mtr1_{}.csv", ts);
+                        let handle = rfd::AsyncFileDialog::new()
+                            .set_title("Save CSV")
+                            .set_file_name(&default_name)
+                            .add_filter("CSV files", &["csv"])
+                            .save_file()
+                            .await;
+
+                        let Some(handle) = handle else {
+                            return Err("cancelled".to_string());
+                        };
+
+                        tokio::fs::write(handle.path(), csv.as_bytes())
+                            .await
+                            .map(|_| handle.path().to_string_lossy().into_owned())
+                            .map_err(|e| e.to_string())
+                    },
+                    |result| match result {
+                        Ok(path) => Message::StatusMessage(format!("Exported: {}", path)),
+                        Err(e) if e == "cancelled" => Message::StatusMessage(String::from("Export cancelled.")),
+                        Err(e) => Message::StatusMessage(format!("Export failed: {}", e)),
+                    },
+                )
             }
 
             // ---- Firmware ----
@@ -786,7 +995,14 @@ impl Application for NevcApp {
 
     fn subscription(&self) -> Subscription<Message> {
         if self.connection == ConnectionState::Connected {
-            iced::time::every(std::time::Duration::from_secs(2))
+            let hz = if self.graph_running {
+                self.graph_poll_hz.clamp(1.0, 50.0)
+            } else if self.active_panel == Panel::MotorControl {
+                2.0 // 2 Hz while on Motor Control tab
+            } else {
+                0.5 // 2-second disconnect probe on other tabs
+            };
+            iced::time::every(std::time::Duration::from_secs_f32(1.0 / hz))
                 .map(|_| Message::QueryMeasurements)
         } else {
             Subscription::none()

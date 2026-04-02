@@ -147,7 +147,7 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
         measurement_row("Phase V",        app.phase_v_current,    "A"),
         measurement_row("Phase W",        app.phase_w_current,    "A"),
         measurement_row("Duty cycle",     app.duty_cycle,         "%"),
-        measurement_row("Motor voltage",   app.gate_voltage,       "V"),
+        measurement_row("System Voltage",   app.gate_voltage,       "V"),
         row![
             text("Direction (meas.):").size(13).width(Length::Fixed(160.0)),
             text(app.measured_direction.as_deref().unwrap_or("—")).size(13),
