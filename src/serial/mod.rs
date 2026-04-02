@@ -1,5 +1,8 @@
 #![allow(dead_code)]
 
+use std::io::{Read, Write};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use serialport::SerialPortType;
 
 // ---------------------------------------------------------------------------
@@ -39,12 +42,95 @@ pub enum ConnectionState {
 }
 
 // ---------------------------------------------------------------------------
-// Serial connection handle (Stage 2 will add the real port handle)
+// Serial handle — wraps an open port in Arc<Mutex> for safe sharing across tasks
 // ---------------------------------------------------------------------------
 
-pub struct SerialConnection {
-    pub port_name: String,
-    // Stage 2: Box<dyn serialport::SerialPort>
+/// Thread-safe handle to an open serial port.
+/// Clone is cheap (just increments the Arc reference count).
+#[derive(Clone)]
+pub struct SerialHandle(pub Arc<Mutex<Box<dyn serialport::SerialPort + Send>>>);
+
+impl std::fmt::Debug for SerialHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SerialHandle")
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Open / close
+// ---------------------------------------------------------------------------
+
+/// Open the SCPI serial port with correct settings per spec:
+/// 115200 baud, 8N1, no flow control, DTR+RTS enabled, 500 ms read timeout.
+/// This is a blocking call — run via `tokio::task::spawn_blocking`.
+pub fn open_port(port_name: &str) -> Result<SerialHandle, String> {
+    let mut port = serialport::new(port_name, 115_200)
+        .data_bits(serialport::DataBits::Eight)
+        .parity(serialport::Parity::None)
+        .stop_bits(serialport::StopBits::One)
+        .flow_control(serialport::FlowControl::None)
+        .timeout(Duration::from_millis(500))
+        .open()
+        .map_err(|e| format!("Failed to open {}: {}", port_name, e))?;
+
+    port.write_data_terminal_ready(true)
+        .map_err(|e| format!("DTR error: {}", e))?;
+    port.write_request_to_send(true)
+        .map_err(|e| format!("RTS error: {}", e))?;
+
+    Ok(SerialHandle(Arc::new(Mutex::new(port))))
+}
+
+// ---------------------------------------------------------------------------
+// SCPI I/O — blocking, run via spawn_blocking
+// ---------------------------------------------------------------------------
+
+/// Send a SCPI query command and return the response line.
+/// Strips trailing CR/LF and leading/trailing whitespace.
+pub fn scpi_query(handle: &SerialHandle, cmd: &str) -> Result<String, String> {
+    let mut port = handle
+        .0
+        .lock()
+        .map_err(|_| String::from("Serial port mutex poisoned"))?;
+
+    // Write command terminated with LF
+    let line = format!("{}\n", cmd);
+    port.write_all(line.as_bytes())
+        .map_err(|e| format!("Write error: {}", e))?;
+
+    // Read bytes until LF or timeout
+    let mut buf = Vec::with_capacity(64);
+    let mut byte = [0u8; 1];
+    loop {
+        match port.read(&mut byte) {
+            Ok(1) => {
+                if byte[0] == b'\n' {
+                    break;
+                }
+                if byte[0] != b'\r' {
+                    buf.push(byte[0]);
+                }
+            }
+            Ok(_) => break,
+            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => break,
+            Err(e) => return Err(format!("Read error: {}", e)),
+        }
+    }
+
+    String::from_utf8(buf)
+        .map(|s| s.trim().to_string())
+        .map_err(|e| format!("Invalid UTF-8 in SCPI response: {}", e))
+}
+
+/// Send a SCPI command that produces no response (set commands).
+pub fn scpi_send(handle: &SerialHandle, cmd: &str) -> Result<(), String> {
+    let mut port = handle
+        .0
+        .lock()
+        .map_err(|_| String::from("Serial port mutex poisoned"))?;
+    let line = format!("{}\n", cmd);
+    port.write_all(line.as_bytes())
+        .map_err(|e| format!("Write error: {}", e))
 }
 
 // ---------------------------------------------------------------------------

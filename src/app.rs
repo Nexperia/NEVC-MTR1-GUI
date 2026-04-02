@@ -1,8 +1,26 @@
 use iced::{Application, Command, Element, Length, Theme};
 use iced::widget::{button, column, container, row, text};
 
-use crate::serial::{ConnectionState, PortInfo};
-use crate::ui::{Panel, config, connection, firmware, graphs, motor};
+use crate::serial::{ConnectionState, PortInfo, SerialHandle};
+use crate::ui::{Panel, config, connection, firmware, graphs, log_panel, motor};
+
+// ---------------------------------------------------------------------------
+// Log entry
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub struct LogEntry {
+    pub timestamp: String,
+    pub level: LogLevel,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum LogLevel {
+    Info,
+    Warn,
+    Error,
+}
 
 // ---------------------------------------------------------------------------
 // Root application state
@@ -38,6 +56,12 @@ pub struct NevcApp {
     pub measured_direction: Option<String>,
     pub duty_cycle: Option<f32>,
     pub gate_voltage: Option<f32>,
+
+    // Open serial connection (None when disconnected)
+    pub serial_handle: Option<SerialHandle>,
+
+    // Event log (shown in Log panel)
+    pub log: Vec<LogEntry>,
 
     // Firmware panel
     pub flash_log: Vec<String>,
@@ -78,8 +102,9 @@ pub enum Message {
     PortSelected(String),
     ConnectPressed,
     DisconnectPressed,
-    Connected(Result<(), String>),
+    Connected(Result<SerialHandle, String>),
     IdnReceived(Result<crate::scpi::IdnResponse, String>),
+    ErrorsChecked(String),
 
     // Motor control
     EnableChanged(bool),
@@ -107,6 +132,7 @@ pub enum Message {
 
     // Generic status
     StatusMessage(String),
+    ClearLog,
 }
 
 // ---------------------------------------------------------------------------
@@ -143,6 +169,8 @@ impl Application for NevcApp {
             duty_cycle: None,
             gate_voltage: None,
             flash_log: Vec::new(),
+            serial_handle: None,
+            log: Vec::new(),
         };
 
         // Detect COM ports immediately on startup
@@ -201,32 +229,57 @@ impl Application for NevcApp {
 
             // ---- Connection ----
             Message::ConnectPressed => {
-                // Stage 2 will open the actual serial port.
-                // For now, just transition state and report.
+                let port_name = match self.selected_port.clone() {
+                    Some(p) => p,
+                    None => return Command::none(),
+                };
                 self.connection = ConnectionState::Connecting;
-                self.status_message = format!(
-                    "Connecting to {}…",
-                    self.selected_port.as_deref().unwrap_or("(no port selected)")
-                );
-                // TODO Stage 2: spawn async connect task
-                Command::none()
+                self.status_message = format!("Connecting to {}\u{2026}", port_name);
+                self.push_log(LogLevel::Info, format!("Connecting to {}\u{2026}", port_name));
+                Command::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || crate::serial::open_port(&port_name))
+                            .await
+                            .map_err(|e| e.to_string())
+                            .and_then(|r| r)
+                    },
+                    Message::Connected,
+                )
             }
 
             Message::DisconnectPressed => {
+                let port = self.selected_port.clone().unwrap_or_default();
+                self.serial_handle = None;
                 self.connection = ConnectionState::Disconnected;
                 self.firmware_version = None;
                 self.idn_manufacturer = None;
                 self.idn_model = None;
                 self.idn_serial = None;
                 self.status_message = String::from("Disconnected.");
+                self.push_log(LogLevel::Info, format!("Disconnected from {}.", port));
                 Command::none()
             }
 
-            Message::Connected(Ok(())) => {
+            Message::Connected(Ok(handle)) => {
                 self.connection = ConnectionState::Connected;
+                self.serial_handle = Some(handle.clone());
                 self.status_message = String::from("Connected — querying firmware version…");
-                // TODO Stage 2: send *IDN? and populate firmware info
-                Command::none()
+                // Fire *IDN? query
+                Command::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            crate::serial::scpi_query(&handle, crate::scpi::commands::IDN)
+                                .and_then(|resp| {
+                                    crate::scpi::IdnResponse::parse(&resp)
+                                        .ok_or_else(|| format!("Could not parse IDN: '{}'", resp))
+                                })
+                        })
+                        .await
+                        .map_err(|e| e.to_string())
+                        .and_then(|r| r)
+                    },
+                    Message::IdnReceived,
+                )
             }
 
             Message::Connected(Err(e)) => {
@@ -237,16 +290,66 @@ impl Application for NevcApp {
 
             Message::IdnReceived(Ok(idn)) => {
                 self.firmware_version = Some(idn.firmware_version.clone());
-                self.idn_manufacturer = Some(idn.manufacturer);
-                self.idn_model = Some(idn.model);
-                self.idn_serial = Some(idn.serial);
-                self.status_message =
-                    format!("Connected — firmware v{}", idn.firmware_version);
-                Command::none()
+                self.idn_manufacturer = Some(idn.manufacturer.clone());
+                self.idn_model = Some(idn.model.clone());
+                self.idn_serial = Some(idn.serial.clone());
+                let msg = format!("Connected \u{2014} firmware v{}", idn.firmware_version);
+                self.status_message = msg.clone();
+                self.push_log(LogLevel::Info, format!(
+                    "IDN: {} {} — firmware v{}",
+                    idn.manufacturer, idn.model, idn.firmware_version
+                ));
+                // Poll the SCPI error queue so any startup errors are surfaced
+                let handle = self.serial_handle.clone().unwrap();
+                Command::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            // Read error count first
+                            let count_str = crate::serial::scpi_query(
+                                &handle,
+                                crate::scpi::commands::SYS_ERROR_COUNT,
+                            )?;
+                            let count: u32 = count_str.trim().parse().unwrap_or(0);
+                            if count == 0 {
+                                return Ok(String::new());
+                            }
+                            // Drain up to `count` errors from queue
+                            let mut messages = Vec::new();
+                            for _ in 0..count {
+                                let err = crate::serial::scpi_query(
+                                    &handle,
+                                    crate::scpi::commands::SYS_ERROR,
+                                )?;
+                                if !err.starts_with("0") {
+                                    messages.push(err);
+                                }
+                            }
+                            Ok(messages.join("; "))
+                        })
+                        .await
+                        .map_err(|e| e.to_string())
+                        .and_then(|r| r)
+                        .unwrap_or_else(|e| format!("(error queue check failed: {})", e))
+                    },
+                    Message::ErrorsChecked,
+                )
             }
 
             Message::IdnReceived(Err(e)) => {
-                self.status_message = format!("IDN query failed: {}", e);
+                let msg = format!("IDN query failed: {}", e);
+                self.push_log(LogLevel::Error, msg.clone());
+                self.status_message = msg;
+                Command::none()
+            }
+
+            Message::ErrorsChecked(errors) => {
+                if !errors.is_empty() {
+                    let msg = format!("SCPI errors on connect: {}", errors);
+                    self.push_log(LogLevel::Warn, msg.clone());
+                    self.status_message = msg;
+                } else {
+                    self.push_log(LogLevel::Info, "Error queue empty.".to_string());
+                }
                 Command::none()
             }
 
@@ -340,6 +443,11 @@ impl Application for NevcApp {
                 self.status_message = msg;
                 Command::none()
             }
+
+            Message::ClearLog => {
+                self.log.clear();
+                Command::none()
+            }
         }
     }
 
@@ -364,6 +472,36 @@ impl Application for NevcApp {
 }
 
 // ---------------------------------------------------------------------------
+// Log helper
+// ---------------------------------------------------------------------------
+
+impl NevcApp {
+    pub fn push_log(&mut self, level: LogLevel, msg: impl Into<String>) {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let h = (secs / 3600) % 24;
+        let m = (secs / 60) % 60;
+        let s = secs % 60;
+        let message = msg.into();
+        // Mirror important log entries to the status bar
+        match level {
+            LogLevel::Warn | LogLevel::Error => {
+                self.status_message = message.clone();
+            }
+            _ => {}
+        }
+        self.log.push(LogEntry {
+            timestamp: format!("{:02}:{:02}:{:02}", h, m, s),
+            level,
+            message,
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Platform-specific view (Windows)
 // ---------------------------------------------------------------------------
 
@@ -379,6 +517,7 @@ impl NevcApp {
             Panel::MotorControl => motor::view(self),
             Panel::Graphs => graphs::view(self),
             Panel::Configuration => config::view(self),
+            Panel::Log => log_panel::view(self),
         };
 
         let content_area = container(panel_content)
@@ -427,6 +566,7 @@ impl NevcApp {
             (Panel::MotorControl, "Motor Control"),
             (Panel::Graphs, "Graphs"),
             (Panel::Configuration, "Configuration"),
+            (Panel::Log, "Log"),
         ];
 
         let buttons: Vec<Element<Message>> = tabs

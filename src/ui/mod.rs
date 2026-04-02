@@ -2,6 +2,7 @@ pub mod config;
 pub mod connection;
 pub mod firmware;
 pub mod graphs;
+pub mod log_panel;
 pub mod motor;
 
 /// Top-level navigation panels.
@@ -12,4 +13,5 @@ pub enum Panel {
     MotorControl,
     Graphs,
     Configuration,
+    Log,
 }

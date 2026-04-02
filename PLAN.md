@@ -7,7 +7,7 @@ serial communication, and `avrdude` for firmware flashing.
 
 ---
 
-## Stage 1 — Project Foundation (current)
+## Stage 1 — Project Foundation
 **Goal:** Compilable skeleton with full module structure and working tab navigation.
 
 - [x] `Cargo.toml` with all required dependencies (`iced`, `serialport`, `tokio`, `anyhow`, `serde`)
@@ -26,13 +26,13 @@ serial communication, and `avrdude` for firmware flashing.
 ## Stage 2 — SCPI Communication Layer
 **Goal:** Establish a live serial connection and send/receive SCPI commands.
 
-- [ ] Open serial port with correct settings (115200 baud, 8N1, LF, DTR+RTS)
-- [ ] Async send/receive loop on a background tokio task
-- [ ] `*IDN?` query → parse `<Manufacturer>,<Model>,<Serial>,<FirmwareVersion>`
+- [x] Open serial port with correct settings (115200 baud, 8N1, LF, DTR+RTS)
+- [x] Async send/receive via `tokio::task::spawn_blocking` + `Arc<Mutex<SerialPort>>`
+- [x] `*IDN?` query → parse `<Manufacturer>,<Model>,<Serial>,<FirmwareVersion>`
   - Display firmware version in Connection and Firmware panels
-- [ ] `SYSTem:ERRor?` / `SYSTem:ERRor:COUNt?` — error queue polling
-- [ ] Error display in status bar / pop-up
-- [ ] Connection state machine: Disconnected → Connecting → Connected → Disconnected
+- [x] `SYSTem:ERRor?` / `SYSTem:ERRor:COUNt?` — error queue polled after connect
+- [x] Error display in status bar
+- [x] Connection state machine: Disconnected → Connecting → Connected → Disconnected
 
 **Outcome:** App connects to board, reads firmware version, reports SCPI errors.
 
