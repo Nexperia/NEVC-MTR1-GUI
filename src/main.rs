@@ -9,5 +9,11 @@ use iced::{Application, Settings};
 fn main() -> iced::Result {
     // Platform check: only Windows is supported in this release.
     // On other platforms the app still compiles and launches but shows a notice.
-    app::NevcApp::run(Settings::default())
+    app::NevcApp::run(Settings {
+        window: iced::window::Settings {
+            exit_on_close_request: false,
+            ..Default::default()
+        },
+        ..Settings::default()
+    })
 }

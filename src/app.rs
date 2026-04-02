@@ -199,6 +199,18 @@ pub enum Message {
     GraphDownloadCsv,
     GraphModeToggled,
 
+    // Window / shutdown
+    /// Fired when the user clicks the OS close button on the window.
+    CloseRequested,
+    /// Stop motor via SCPI then perform a clean disconnect.
+    StopThenDisconnect,
+    /// Stop motor via SCPI then close the window.
+    StopThenExit,
+    /// Perform a clean disconnect without stopping the motor first.
+    DoDisconnect,
+    /// Close the window without stopping the motor first.
+    DoExit,
+
     // Generic status
     StatusMessage(String),
     ClearLog,
@@ -324,6 +336,35 @@ impl Application for NevcApp {
             }
 
             Message::DisconnectPressed => {
+                if self.motor_enabled {
+                    // Ask user before pulling the connection out from under a running motor
+                    return Command::perform(
+                        async {
+                            rfd::AsyncMessageDialog::new()
+                                .set_title("Motor is running")
+                                .set_description(
+                                    "The motor is currently running.\n\
+                                     Stop the motor before disconnecting?"
+                                )
+                                .set_buttons(rfd::MessageButtons::YesNo)
+                                .set_level(rfd::MessageLevel::Warning)
+                                .show()
+                                .await
+                        },
+                        |result| {
+                            if result == rfd::MessageDialogResult::Yes {
+                                Message::StopThenDisconnect
+                            } else {
+                                Message::DoDisconnect
+                            }
+                        },
+                    );
+                }
+                // Motor not running — disconnect immediately
+                Command::perform(async {}, |_| Message::DoDisconnect)
+            }
+
+            Message::DoDisconnect => {
                 let port = self.selected_port.clone().unwrap_or_default();
                 self.serial_handle = None;
                 self.connection = ConnectionState::Disconnected;
@@ -347,6 +388,71 @@ impl Application for NevcApp {
                 self.push_log(LogLevel::Info, format!("Disconnected from {}.", port));
                 Command::none()
             }
+
+            Message::CloseRequested => {
+                if self.motor_enabled {
+                    return Command::perform(
+                        async {
+                            rfd::AsyncMessageDialog::new()
+                                .set_title("Motor is running")
+                                .set_description(
+                                    "The motor is currently running.\n\
+                                     Stop the motor before exiting?"
+                                )
+                                .set_buttons(rfd::MessageButtons::YesNo)
+                                .set_level(rfd::MessageLevel::Warning)
+                                .show()
+                                .await
+                        },
+                        |result| {
+                            if result == rfd::MessageDialogResult::Yes {
+                                Message::StopThenExit
+                            } else {
+                                Message::DoExit
+                            }
+                        },
+                    );
+                }
+                iced::window::close(iced::window::Id::MAIN)
+            }
+
+            Message::StopThenDisconnect => {
+                let Some(handle) = self.serial_handle.clone() else {
+                    return Command::perform(async {}, |_| Message::DoDisconnect);
+                };
+                Command::perform(
+                    async move {
+                        let _ = tokio::task::spawn_blocking(move || {
+                            let _ = crate::serial::scpi_send(
+                                &handle,
+                                crate::scpi::commands::CONF_ENABLE_OFF,
+                            );
+                        })
+                        .await;
+                    },
+                    |_| Message::DoDisconnect,
+                )
+            }
+
+            Message::StopThenExit => {
+                let Some(handle) = self.serial_handle.clone() else {
+                    return iced::window::close(iced::window::Id::MAIN);
+                };
+                Command::perform(
+                    async move {
+                        let _ = tokio::task::spawn_blocking(move || {
+                            let _ = crate::serial::scpi_send(
+                                &handle,
+                                crate::scpi::commands::CONF_ENABLE_OFF,
+                            );
+                        })
+                        .await;
+                    },
+                    |_| Message::DoExit,
+                )
+            }
+
+            Message::DoExit => iced::window::close(iced::window::Id::MAIN),
 
             Message::Connected(Ok(handle)) => {
                 self.connection = ConnectionState::Connected;
@@ -994,6 +1100,14 @@ impl Application for NevcApp {
     }
 
     fn subscription(&self) -> Subscription<Message> {
+        let window_events = iced::event::listen_with(|event, _status| {
+            if let iced::Event::Window(_id, iced::window::Event::CloseRequested) = event {
+                Some(Message::CloseRequested)
+            } else {
+                None
+            }
+        });
+
         if self.connection == ConnectionState::Connected {
             let hz = if self.graph_running {
                 self.graph_poll_hz.clamp(1.0, 50.0)
@@ -1002,10 +1116,11 @@ impl Application for NevcApp {
             } else {
                 0.5 // 2-second disconnect probe on other tabs
             };
-            iced::time::every(std::time::Duration::from_secs_f32(1.0 / hz))
-                .map(|_| Message::QueryMeasurements)
+            let poll = iced::time::every(std::time::Duration::from_secs_f32(1.0 / hz))
+                .map(|_| Message::QueryMeasurements);
+            Subscription::batch([window_events, poll])
         } else {
-            Subscription::none()
+            window_events
         }
     }
 
