@@ -1,4 +1,4 @@
-use iced::{Application, Command, Element, Length, Theme};
+use iced::{Application, Command, Element, Length, Subscription, Theme};
 use iced::widget::{button, column, container, row, text};
 
 use crate::serial::{ConnectionState, PortInfo, SerialHandle};
@@ -46,6 +46,8 @@ pub struct NevcApp {
     pub motor_frequency: f32,
     pub motor_frequency_input: String,
     pub motor_direction: Direction,
+    /// True while a direction-change async sequence is in flight.
+    pub motor_busy: bool,
 
     // Measurement values (read-side, None until first poll)
     pub speed_rpm: Option<f32>,
@@ -112,6 +114,14 @@ pub enum Message {
     FrequencyInputChanged(String),
     FrequencySubmit,
     DirectionChanged(Direction),
+    // Confirmations from the board after setting a value
+    EnableConfirmed(Result<bool, String>),
+    FrequencyConfirmed(Result<u32, String>),
+    DirectionConfirmed(Result<(Direction, bool), String>),
+    /// Board state read back after connect.
+    MotorStateRefreshed { enabled: bool, frequency: u32, direction: Direction },
+    /// Physical disconnect detected via I/O error.
+    DeviceDisconnected,
 
     // Measurements
     QueryMeasurements,
@@ -160,6 +170,7 @@ impl Application for NevcApp {
             motor_frequency: 20_000.0,
             motor_frequency_input: String::from("20000"),
             motor_direction: Direction::Forward,
+            motor_busy: false,
             speed_rpm: None,
             bus_current: None,
             phase_u_current: None,
@@ -255,6 +266,16 @@ impl Application for NevcApp {
                 self.idn_manufacturer = None;
                 self.idn_model = None;
                 self.idn_serial = None;
+                self.motor_enabled = false;
+                self.motor_busy = false;
+                self.speed_rpm = None;
+                self.bus_current = None;
+                self.phase_u_current = None;
+                self.phase_v_current = None;
+                self.phase_w_current = None;
+                self.measured_direction = None;
+                self.duty_cycle = None;
+                self.gate_voltage = None;
                 self.status_message = String::from("Disconnected.");
                 self.push_log(LogLevel::Info, format!("Disconnected from {}.", port));
                 Command::none()
@@ -350,20 +371,87 @@ impl Application for NevcApp {
                 } else {
                     self.push_log(LogLevel::Info, "Error queue empty.".to_string());
                 }
-                Command::none()
+                // Read current motor state from board so UI reflects reality after reconnect.
+                let Some(handle) = self.serial_handle.clone() else {
+                    return Command::none();
+                };
+                Command::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            use crate::serial::scpi_query;
+                            use crate::scpi::commands;
+                            let en_resp = scpi_query(&handle, commands::CONF_ENABLE_QUERY)
+                                .unwrap_or_default();
+                            let enabled = en_resp.trim() == "1";
+                            let freq_resp = scpi_query(&handle, commands::CONF_FREQUENCY_QUERY)
+                                .unwrap_or_default();
+                            let frequency: u32 = freq_resp.trim().parse().unwrap_or(20_000);
+                            let dir_resp = scpi_query(&handle, commands::CONF_DIR_QUERY)
+                                .unwrap_or_default();
+                            let direction = if dir_resp.trim().to_uppercase().starts_with("REVE") {
+                                Direction::Reverse
+                            } else {
+                                Direction::Forward
+                            };
+                            Ok::<_, String>((enabled, frequency, direction))
+                        })
+                        .await
+                        .map_err(|e| e.to_string())
+                        .and_then(|r| r)
+                    },
+                    |result| match result {
+                        Ok((enabled, frequency, direction)) => {
+                            Message::MotorStateRefreshed { enabled, frequency, direction }
+                        }
+                        Err(_) => Message::StatusMessage(
+                            String::from("Could not read motor state from board."),
+                        ),
+                    },
+                )
             }
 
             // ---- Motor control ----
             Message::EnableChanged(en) => {
+                if self.motor_busy {
+                    return Command::none();
+                }
                 self.motor_enabled = en;
-                // TODO Stage 3: send SCPI CONFigure:ENABle ON/OFF
-                Command::none()
+                let Some(handle) = self.serial_handle.clone() else {
+                    return Command::none();
+                };
+                let cmd = if en {
+                    crate::scpi::commands::CONF_ENABLE_ON
+                } else {
+                    crate::scpi::commands::CONF_ENABLE_OFF
+                };
+                self.push_log(
+                    LogLevel::Info,
+                    format!("Enable → {}", if en { "ON" } else { "OFF" }),
+                );
+                Command::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            crate::serial::scpi_send(&handle, cmd)?;
+                            let resp = crate::serial::scpi_query(
+                                &handle,
+                                crate::scpi::commands::CONF_ENABLE_QUERY,
+                            )?;
+                            Ok(resp.trim() != "0")
+                        })
+                        .await
+                        .map_err(|e| e.to_string())
+                        .and_then(|r| r)
+                    },
+                    Message::EnableConfirmed,
+                )
             }
 
             Message::FrequencyChanged(freq) => {
-                self.motor_frequency = freq;
-                self.motor_frequency_input = format!("{:.0}", freq);
-                // TODO Stage 3: send SCPI CONFigure:FREQuency
+                // Ignore slider drag while motor is running — keeps UI in sync with board.
+                if !self.motor_enabled {
+                    self.motor_frequency = freq;
+                    self.motor_frequency_input = format!("{:.0}", freq);
+                }
                 Command::none()
             }
 
@@ -373,34 +461,193 @@ impl Application for NevcApp {
             }
 
             Message::FrequencySubmit => {
-                if let Ok(hz) = self.motor_frequency_input.trim().parse::<f32>() {
-                    match crate::scpi::validate_frequency(hz) {
-                        Ok(valid_hz) => {
-                            self.motor_frequency = valid_hz as f32;
-                            self.status_message = format!("Frequency set to {} Hz", valid_hz);
-                            // TODO Stage 3: send SCPI command
-                        }
-                        Err(e) => {
-                            self.status_message = e;
-                        }
-                    }
-                } else {
+                if self.motor_enabled {
                     self.status_message =
-                        String::from("Invalid frequency value — enter a number.");
+                        String::from("Disable the motor before changing frequency.");
+                    return Command::none();
                 }
-                Command::none()
+                let parse_result = self
+                    .motor_frequency_input
+                    .trim()
+                    .parse::<f32>()
+                    .ok()
+                    .and_then(|hz| crate::scpi::validate_frequency(hz).ok());
+                match parse_result {
+                    Some(valid_hz) => {
+                        self.motor_frequency = valid_hz as f32;
+                        self.motor_frequency_input = valid_hz.to_string();
+                        let Some(handle) = self.serial_handle.clone() else {
+                            return Command::none();
+                        };
+                        let cmd = crate::scpi::commands::conf_frequency(valid_hz);
+                        self.push_log(LogLevel::Info, format!("Frequency → {} Hz", valid_hz));
+                        Command::perform(
+                            async move {
+                                tokio::task::spawn_blocking(move || {
+                                    crate::serial::scpi_send(&handle, &cmd)?;
+                                    let resp = crate::serial::scpi_query(
+                                        &handle,
+                                        crate::scpi::commands::CONF_FREQUENCY_QUERY,
+                                    )?;
+                                    resp.trim()
+                                        .parse::<u32>()
+                                        .map_err(|_| format!("Bad freq response: '{}'", resp))
+                                })
+                                .await
+                                .map_err(|e| e.to_string())
+                                .and_then(|r| r)
+                            },
+                            Message::FrequencyConfirmed,
+                        )
+                    }
+                    None => {
+                        self.status_message = format!(
+                            "Invalid frequency — enter a value between {} and {} Hz.",
+                            crate::scpi::FREQ_MIN_HZ,
+                            crate::scpi::FREQ_MAX_HZ
+                        );
+                        Command::none()
+                    }
+                }
             }
 
             Message::DirectionChanged(dir) => {
-                self.motor_direction = dir;
-                // TODO Stage 3: send SCPI CONFigure:DIREction
-                Command::none()
+                if self.motor_busy {
+                    return Command::none();
+                }
+                self.motor_direction = dir.clone();
+                self.motor_busy = true;
+                let Some(handle) = self.serial_handle.clone() else {
+                    self.motor_busy = false;
+                    return Command::none();
+                };
+                let was_enabled = self.motor_enabled;
+                let dir_cmd = match &dir {
+                    Direction::Forward => crate::scpi::commands::CONF_DIR_FORWARD,
+                    Direction::Reverse => crate::scpi::commands::CONF_DIR_REVERSE,
+                };
+                self.push_log(
+                    LogLevel::Info,
+                    format!("Direction → {} — cycling enable…", dir),
+                );
+                Command::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            use std::time::Duration;
+
+                            // 1. Send direction command
+                            crate::serial::scpi_send(&handle, dir_cmd)?;
+
+                            // 2. Poll speed until motor stops (max ~1.5 s)
+                            for _ in 0..10 {
+                                std::thread::sleep(Duration::from_millis(150));
+                                if let Ok(resp) = crate::serial::scpi_query(
+                                    &handle,
+                                    crate::scpi::commands::MEAS_SPEED,
+                                ) {
+                                    let speed: f32 = resp.trim().parse().unwrap_or(999.0);
+                                    if speed.abs() < 10.0 {
+                                        break;
+                                    }
+                                }
+                            }
+
+                            // 3. Ensure enable is off
+                            crate::serial::scpi_send(
+                                &handle,
+                                crate::scpi::commands::CONF_ENABLE_OFF,
+                            )?;
+
+                            // 4. If motor was running, turn it back on
+                            if was_enabled {
+                                std::thread::sleep(Duration::from_millis(100));
+                                crate::serial::scpi_send(
+                                    &handle,
+                                    crate::scpi::commands::CONF_ENABLE_ON,
+                                )?;
+                            }
+
+                            // 5. Confirm direction (now settled)
+                            let resp = crate::serial::scpi_query(
+                                &handle,
+                                crate::scpi::commands::CONF_DIR_QUERY,
+                            )?;
+                            let upper = resp.trim().to_uppercase();
+                            let confirmed_dir = if upper.starts_with("FORW") {
+                                Direction::Forward
+                            } else if upper.starts_with("REVE") {
+                                Direction::Reverse
+                            } else {
+                                return Err(format!("Unexpected direction: '{}'", resp));
+                            };
+
+                            Ok((confirmed_dir, was_enabled))
+                        })
+                        .await
+                        .map_err(|e| e.to_string())
+                        .and_then(|r| r)
+                    },
+                    Message::DirectionConfirmed,
+                )
             }
 
             // ---- Measurements ----
             Message::QueryMeasurements => {
-                // TODO Stage 3: send all MEASure:* queries
-                Command::none()
+                let Some(handle) = self.serial_handle.clone() else {
+                    return Command::none();
+                };
+                Command::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            use crate::serial::scpi_query;
+                            use crate::scpi::commands;
+                            let pf = |r: Result<String, String>| -> Option<f32> {
+                                r.ok().and_then(|s| s.trim().parse().ok())
+                            };
+                            // Probe first — if write fails the device is physically gone.
+                            let speed_result = scpi_query(&handle, commands::MEAS_SPEED);
+                            if let Err(ref e) = speed_result {
+                                let lower = e.to_lowercase();
+                                if lower.starts_with("write error") || lower.starts_with("read error") {
+                                    return Err(format!("io:{}", e));
+                                }
+                            }
+                            let speed = speed_result.ok().and_then(|s| s.trim().parse().ok());
+                            let bus_current =
+                                pf(scpi_query(&handle, commands::MEAS_CURRENT_IBUS));
+                            let phase_u =
+                                pf(scpi_query(&handle, commands::MEAS_CURRENT_IPHU));
+                            let phase_v =
+                                pf(scpi_query(&handle, commands::MEAS_CURRENT_IPHV));
+                            let phase_w =
+                                pf(scpi_query(&handle, commands::MEAS_CURRENT_IPHW));
+                            let direction = scpi_query(&handle, commands::MEAS_DIRECTION)
+                                .ok()
+                                .map(|s| s.trim().to_string());
+                            let duty_cycle =
+                                pf(scpi_query(&handle, commands::MEAS_DUTY_CYCLE));
+                            let voltage = pf(scpi_query(&handle, commands::MEAS_VOLTAGE));
+                            Ok::<Message, String>(Message::MeasurementsReceived {
+                                speed,
+                                bus_current,
+                                phase_u,
+                                phase_v,
+                                phase_w,
+                                direction,
+                                duty_cycle,
+                                voltage,
+                            })
+                        })
+                        .await
+                        .map_err(|e| e.to_string())
+                        .and_then(|r| r)
+                    },
+                    |result| match result {
+                        Ok(msg) => msg,
+                        Err(e) if e.starts_with("io:") => Message::DeviceDisconnected,
+                        Err(e) => Message::StatusMessage(format!("Measurement error: {}", e)),
+                    },
+                )
             }
 
             Message::MeasurementsReceived {
@@ -421,6 +668,92 @@ impl Application for NevcApp {
                 self.measured_direction = direction;
                 self.duty_cycle = duty_cycle;
                 self.gate_voltage = voltage;
+                Command::none()
+            }
+
+            // ---- Motor control confirmations ----
+            Message::EnableConfirmed(Ok(actual)) => {
+                self.motor_enabled = actual;
+                self.push_log(
+                    LogLevel::Info,
+                    format!("Enable confirmed: {}", if actual { "ON" } else { "OFF" }),
+                );
+                Command::none()
+            }
+            Message::EnableConfirmed(Err(e)) => {
+                self.push_log(LogLevel::Error, format!("Enable command failed: {}", e));
+                Command::none()
+            }
+
+            Message::FrequencyConfirmed(Ok(hz)) => {
+                self.motor_frequency = hz as f32;
+                self.motor_frequency_input = hz.to_string();
+                self.push_log(LogLevel::Info, format!("Frequency confirmed: {} Hz", hz));
+                Command::none()
+            }
+            Message::FrequencyConfirmed(Err(e)) => {
+                self.push_log(LogLevel::Error, format!("Frequency command failed: {}", e));
+                Command::none()
+            }
+
+            Message::DirectionConfirmed(Ok((dir, enabled))) => {
+                self.motor_direction = dir.clone();
+                self.motor_enabled = enabled;
+                self.motor_busy = false;
+                self.push_log(
+                    LogLevel::Info,
+                    format!(
+                        "Direction confirmed: {} (motor {})",
+                        dir,
+                        if enabled { "ON" } else { "OFF" }
+                    ),
+                );
+                Command::none()
+            }
+            Message::DirectionConfirmed(Err(e)) => {
+                self.motor_busy = false;
+                self.push_log(LogLevel::Error, format!("Direction change failed: {}", e));
+                Command::none()
+            }
+
+            Message::MotorStateRefreshed { enabled, frequency, direction } => {
+                self.motor_enabled = enabled;
+                self.motor_frequency = frequency as f32;
+                self.motor_frequency_input = frequency.to_string();
+                self.motor_direction = direction.clone();
+                self.push_log(
+                    LogLevel::Info,
+                    format!(
+                        "Motor state on connect: {} | {} Hz | {}",
+                        if enabled { "ON" } else { "OFF" },
+                        frequency,
+                        direction,
+                    ),
+                );
+                Command::none()
+            }
+
+            Message::DeviceDisconnected => {
+                let port = self.selected_port.clone().unwrap_or_default();
+                self.serial_handle = None;
+                self.connection = ConnectionState::Disconnected;
+                self.firmware_version = None;
+                self.idn_manufacturer = None;
+                self.idn_model = None;
+                self.idn_serial = None;
+                self.motor_enabled = false;
+                self.motor_busy = false;
+                self.speed_rpm = None;
+                self.bus_current = None;
+                self.phase_u_current = None;
+                self.phase_v_current = None;
+                self.phase_w_current = None;
+                self.measured_direction = None;
+                self.duty_cycle = None;
+                self.gate_voltage = None;
+                let msg = format!("Device disconnected unexpectedly ({})", port);
+                self.push_log(LogLevel::Error, msg.clone());
+                self.status_message = msg;
                 Command::none()
             }
 
@@ -448,6 +781,15 @@ impl Application for NevcApp {
                 self.log.clear();
                 Command::none()
             }
+        }
+    }
+
+    fn subscription(&self) -> Subscription<Message> {
+        if self.connection == ConnectionState::Connected {
+            iced::time::every(std::time::Duration::from_secs(2))
+                .map(|_| Message::QueryMeasurements)
+        } else {
+            Subscription::none()
         }
     }
 

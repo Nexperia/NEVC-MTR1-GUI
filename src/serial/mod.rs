@@ -92,7 +92,9 @@ pub fn scpi_query(handle: &SerialHandle, cmd: &str) -> Result<String, String> {
         .0
         .lock()
         .map_err(|_| String::from("Serial port mutex poisoned"))?;
-
+    // Drain any stale bytes in the receive buffer (e.g. a previous late response)
+    // before sending a new command, so we always read a fresh reply.
+    let _ = port.clear(serialport::ClearBuffer::Input);
     // Write command terminated with LF
     let line = format!("{}\n", cmd);
     port.write_all(line.as_bytes())

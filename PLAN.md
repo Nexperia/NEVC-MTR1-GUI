@@ -41,17 +41,17 @@ serial communication, and `avrdude` for firmware flashing.
 ## Stage 3 — Motor Control Panel
 **Goal:** Full motor control and measurement queries.
 
-- [ ] Enable/disable motor (`CONFigure:ENABle ON/OFF`) with toggle
-- [ ] Set frequency (`CONFigure:FREQuency <Hz>`) with input + slider (7183–100000 Hz)
+- [x] Enable/disable motor (`CONFigure:ENABle ON/OFF`) with toggle
+- [x] Set frequency (`CONFigure:FREQuency <Hz>`) with input + slider (7183–100000 Hz)
   - Input validation with error message
-- [ ] Set direction (`CONFigure:DIREction FORWard/REVErse`) with buttons/dropdown
-- [ ] Query all measurements on demand and on a polling timer:
+- [x] Set direction (`CONFigure:DIREction FORWard/REVErse`) with buttons/dropdown
+- [x] Query all measurements on demand and on a polling timer:
   - `MEASure:SPEEd?` → RPM
   - `MEASure:CURRent:IBUS?` / `IPHU?` / `IPHV?` / `IPHW?` → Amperes
   - `MEASure:DIREction?` → FORWard / REVErse / UNKNown
   - `MEASure:DUTYcycle?` → %
   - `MEASure:VOLTage?` → V
-- [ ] Query confirmation (`CONFigure:ENABle?`, `CONFigure:FREQuency?`, `CONFigure:DIREction?`)
+- [x] Query confirmation (`CONFigure:ENABle?`, `CONFigure:FREQuency?`, `CONFigure:DIREction?`)
 
 **Outcome:** Full motor control and live measurement reading.
 
