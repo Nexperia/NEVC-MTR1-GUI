@@ -12,6 +12,7 @@ pub enum Panel {
     Firmware,
     MotorControl,
     Graphs,
+    #[allow(dead_code)]
     Configuration,
     Log,
 }

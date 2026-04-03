@@ -73,36 +73,45 @@ serial communication, and `avrdude` for firmware flashing.
 
 ---
 
-## Stage 5 — Firmware Management Panel
-**Goal:** Flash firmware to the Arduino Leonardo without leaving the GUI.
+## Stages 5 + 6 — Firmware & Configuration (Combined Tab)
+**Goal:** Edit all 26 firmware parameters and compile+upload directly from the GUI.
 
-- [ ] Detect Arduino Leonardo specifically (USB VID=0x2341, PID=0x8036)
-- [ ] Implement 1200-baud reset trick to enter bootloader (PID changes to 0x0036)
-  - Close original port, wait for bootloader port to appear, open with 1200 baud, close
-- [ ] Bundle `avrdude.exe` + required `.conf` in application resources
-- [ ] Bundle compiled firmware `.hex` for `dev/scpi-gui-compatible` branch
-- [ ] Call `avrdude` via `std::process::Command` with progress output streamed to GUI
-- [ ] Display flash success / detailed error message
-- [ ] Parse current firmware version from `*IDN?` response for upgrade comparison
-- [ ] Fallback instructions if avrdude not found
+Firmware source: `https://github.com/Nexperia/NEVC-MTR1-t01` branch `dev/scpi-gui-compatible`
+Config file: `main/config.h` — 26 user-settable `#define` constants.
+IDN serial: `*IDN?` 3rd field — 26 hyphen-separated hex values mapping 1:1 to config parameters.
 
-**Outcome:** One-click firmware flashing.
+### 5a — Firmware Config Data Model
+- [x] `FirmwareConfig` struct — 26 typed fields with repo default values hard-coded
+- [x] `FirmwareConfig::from_idn_serial(serial)` — parse hex IDN serial → struct
+- [x] `patch_config_h(source, config)` — modify `#define PARAM value` in config.h text
 
----
+### 5b — Toolchain Auto-Bootstrap
+- [x] Auto-download `arduino-cli.exe` from GitHub releases if not present
+  - Stored in `%APPDATA%\nevc_mtr1_gui\tools\`
+  - Uses GitHub releases API to find latest Windows 64-bit zip
+- [x] Auto-install `arduino:avr` core via `arduino-cli core install arduino:avr`
+- [x] Auto-download firmware ZIP from GitHub (`dev/scpi-gui-compatible` branch)
+  - Stored in `%APPDATA%\nevc_mtr1_gui\firmware\`
+  - `main/` directory extracted; presence of `main/main.ino` checked before re-download
 
-## Stage 6 — Configuration Panel
-**Goal:** Display and edit firmware constants parsed from `*IDN?` serial field.
+### 5c — Compile & Upload Flow
+- [x] Patch `main/config.h` with current GUI parameter values
+- [x] `arduino-cli compile --fqbn arduino:avr:leonardo main/` — compile sketch
+- [x] 1200-baud bootloader reset trick on the connected (or selected) Leonardo port
+  - Open port at 1200 baud with DTR asserted → close → wait for bootloader port (PID 0x0036)
+- [x] `arduino-cli upload --fqbn arduino:avr:leonardo -p <port> main/` — upload
+- [x] Multi-step progress log shown in GUI during each stage
 
-- [ ] Parse the 26-field hyphen-separated hex serial in `*IDN?` → firmware constants
-  - Map each field to its `scpi_config.h` constant (requires firmware documentation)
-- [ ] Display constants in a table with descriptions
-- [ ] Mark read-only vs user-configurable fields
-- [ ] Allow editing user-configurable values with validation
-- [ ] Serialize modified values back to `scpi_config.h` format
-- [ ] Option to trigger recompile + flash (requires Arduino CLI installed)
-- [ ] Warn before overwriting read-only fields
+### 6 — Config Editing UI (Combined with Firmware Tab)
+- [x] Source toggle: **Repo defaults** (hard-coded from config.h) vs **From device** (parsed IDN serial)
+- [x] Grouped, labelled parameter inputs for all 26 parameters:
+  - Motor config, Phase current, Bus current, Speed control, PID, Voltage sense, System
+- [x] Input validation (parse on compile, highlight invalid fields)
+- [x] "Load Defaults" button to reset inputs to selected source
+- [x] "Compile & Upload" button — triggers full tool-bootstrap + compile + upload pipeline
+- [x] Step-by-step progress shown in flash log panel
 
-**Outcome:** In-app firmware parameter configuration.
+**Outcome:** Full in-GUI firmware configuration editor with one-click compile + flash.
 
 ---
 

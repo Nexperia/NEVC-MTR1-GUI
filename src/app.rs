@@ -49,6 +49,28 @@ pub enum GraphMode {
 }
 
 // ---------------------------------------------------------------------------
+// Firmware config source toggle
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum FwConfigSource {
+    Repo,
+    Device,
+}
+
+// ---------------------------------------------------------------------------
+// Flash pipeline status
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum FlashStatus {
+    Idle,
+    Busy(String),
+    Done,
+    Failed(String),
+}
+
+// ---------------------------------------------------------------------------
 // Log entry
 // ---------------------------------------------------------------------------
 
@@ -109,8 +131,14 @@ pub struct NevcApp {
     // Event log (shown in Log panel)
     pub log: Vec<LogEntry>,
 
-    // Firmware panel
+    // Firmware + Config panel
     pub flash_log: Vec<String>,
+    pub flash_status: FlashStatus,
+    pub firmware_config: crate::firmware::FirmwareConfig,
+    pub firmware_config_source: FwConfigSource,
+    pub fw_param_inputs: Vec<String>,
+    pub flash_log_content: iced::widget::text_editor::Content,
+    pub fw_reconnect_after_flash: bool,
 
     // Graphs panel
     pub graph_channels: [bool; NUM_CHANNELS],
@@ -188,9 +216,25 @@ pub enum Message {
         voltage: Option<f32>,
     },
 
-    // Firmware
+    // Firmware + Config
     FlashFirmwarePressed,
     FlashLogEntry(String),
+    /// Toggle between repo defaults and device IDN as config source
+    FwSourceChanged(FwConfigSource),
+    /// Load config from the selected source into editing buffers
+    FwLoadConfig,
+    /// Individual parameter input changed
+    FwParamChanged(usize, String),
+    /// Start the full compile+upload pipeline
+    FwCompileAndUpload,
+    // Flash pipeline step results — each carries (accumulated_data, log_lines)
+    FwCliEnsured(Result<(std::path::PathBuf, Vec<String>), String>),
+    FwCoreEnsured(Result<(), String>),
+    FwSourceEnsured(Result<(std::path::PathBuf, std::path::PathBuf, Vec<String>), String>),
+    FwCompiled(Result<(std::path::PathBuf, std::path::PathBuf, Vec<String>), String>),
+    FwBootloaderReady(Result<(std::path::PathBuf, std::path::PathBuf, String, Vec<String>), String>),
+    FwUploadDone(Result<Vec<String>, String>),
+    FwLogAction(iced::widget::text_editor::Action),
 
     // Graphs panel
     GraphChannelToggled(usize),
@@ -251,6 +295,12 @@ impl Application for NevcApp {
             duty_cycle: None,
             gate_voltage: None,
             flash_log: Vec::new(),
+            flash_status: FlashStatus::Idle,
+            firmware_config: crate::firmware::FirmwareConfig::default(),
+            firmware_config_source: FwConfigSource::Repo,
+            fw_param_inputs: crate::firmware::FirmwareConfig::default().to_input_strings(),
+            flash_log_content: iced::widget::text_editor::Content::with_text(""),
+            fw_reconnect_after_flash: false,
             serial_handle: None,
             log: Vec::new(),
             graph_channels: [false; NUM_CHANNELS],
@@ -1072,17 +1122,283 @@ impl Application for NevcApp {
                 )
             }
 
-            // ---- Firmware ----
-            Message::FlashFirmwarePressed => {
-                self.flash_log.clear();
-                self.flash_log
-                    .push(String::from("Flash initiated — TODO Stage 5"));
-                // TODO Stage 5: avrdude integration
-                Command::none()
-            }
+            // ---- Firmware & Config ----
+            Message::FlashFirmwarePressed => Command::none(),
 
             Message::FlashLogEntry(entry) => {
                 self.flash_log.push(entry);
+                Command::none()
+            }
+
+            Message::FwSourceChanged(src) => {
+                self.firmware_config_source = src.clone();
+                match src {
+                    FwConfigSource::Repo => {
+                        let defaults = crate::firmware::FirmwareConfig::default();
+                        self.fw_param_inputs = defaults.to_input_strings();
+                        self.firmware_config = defaults;
+                    }
+                    FwConfigSource::Device => {
+                        if let Some(serial) = &self.idn_serial.clone() {
+                            if let Some(cfg) = crate::firmware::FirmwareConfig::from_idn_serial(serial) {
+                                self.fw_param_inputs = cfg.to_input_strings();
+                                self.firmware_config = cfg;
+                            } else {
+                                self.push_log(LogLevel::Warn, "Could not parse IDN serial into config.".to_string());
+                            }
+                        } else {
+                            self.push_log(LogLevel::Warn, "No IDN serial available — connect to device first.".to_string());
+                        }
+                    }
+                }
+                Command::none()
+            }
+
+            Message::FwLoadConfig => Command::none(),
+
+            Message::FwParamChanged(idx, value) => {
+                if let Some(slot) = self.fw_param_inputs.get_mut(idx) {
+                    *slot = value;
+                }
+                Command::none()
+            }
+
+            Message::FwCompileAndUpload => {
+                // Parse all inputs into a config struct
+                match crate::firmware::FirmwareConfig::try_from_inputs(&self.fw_param_inputs) {
+                    Err((idx, msg)) => {
+                        self.flash_status = FlashStatus::Failed(format!("Parameter {}: {}", idx, msg));
+                        return Command::none();
+                    }
+                    Ok(config) => {
+                        self.firmware_config = config;
+                    }
+                }
+                let port = self.selected_port.clone().unwrap_or_else(|| String::from("COM1"));
+                // Disconnect serial before flashing — it conflicts with the 1200-baud reset
+                self.fw_reconnect_after_flash = self.connection == ConnectionState::Connected;
+                if self.fw_reconnect_after_flash {
+                    self.serial_handle = None;
+                    self.connection = ConnectionState::Disconnected;
+                }
+                self.flash_log.clear();
+                self.flash_log_content = iced::widget::text_editor::Content::with_text("");
+                self.flash_status = FlashStatus::Busy("Checking for Arduino CLI…".to_string());
+                self.flash_log.push(format!("[Flash] Starting… port={}", port));
+                self.refresh_flash_content();
+                Command::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            // Accumulate log lines for reporting back
+                            let mut log: Vec<String> = Vec::new();
+                            let mut progress = |s: &str| {
+                                log.push(s.to_string());
+                            };
+                            // Step 1 + 2: cli + core
+                            let cli = crate::firmware::ensure_arduino_cli(&mut progress)
+                                .map_err(|e| e.to_string())?;
+                            crate::firmware::ensure_avr_core(&cli, &mut progress)
+                                .map_err(|e| e.to_string())?;
+                            // Return cli path + accumulated log
+                            Ok::<_, String>((cli, log))
+                        })
+                        .await
+                        .map_err(|e| e.to_string())
+                        .and_then(|r| r)
+                    },
+                    |result| match result {
+                        Ok((cli, log_lines)) => Message::FwCliEnsured(Ok((cli, log_lines))),
+                        Err(e) => Message::FwCliEnsured(Err(e)),
+                    },
+                )
+            }
+
+            Message::FwCliEnsured(Err(e)) => {
+                self.flash_log.push(format!("[Error] {}", e));
+                self.flash_status = FlashStatus::Failed(e);
+                self.refresh_flash_content();
+                Command::none()
+            }
+
+            Message::FwCliEnsured(Ok((cli, log_lines))) => {
+                // Store cli path, append log
+                for line in &log_lines {
+                    self.flash_log.push(line.clone());
+                }
+                self.flash_status = FlashStatus::Busy("Downloading firmware source…".to_string());
+                self.refresh_flash_content();
+
+                Command::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            let mut log: Vec<String> = Vec::new();
+                            let mut p = |s: &str| { log.push(s.to_string()); };
+                            let src = crate::firmware::ensure_firmware_source(&mut p)
+                                .map_err(|e| e.to_string())?;
+                            Ok::<_, String>((cli, src, log))
+                        })
+                        .await
+                        .map_err(|e| e.to_string())
+                        .and_then(|r| r)
+                    },
+                    |result| match result {
+                        Ok((cli, src, log)) => Message::FwSourceEnsured(Ok((cli, src, log))),
+                        Err(e) => Message::FwSourceEnsured(Err(e)),
+                    },
+                )
+            }
+
+            Message::FwSourceEnsured(Err(e)) => {
+                self.flash_log.push(format!("[Error] {}", e));
+                self.flash_status = FlashStatus::Failed(e);
+                self.refresh_flash_content();
+                Command::none()
+            }
+
+            Message::FwSourceEnsured(Ok((cli, src_dir, log_lines))) => {
+                for line in &log_lines {
+                    self.flash_log.push(line.clone());
+                }
+                self.flash_status = FlashStatus::Busy("Patching config.h and compiling…".to_string());
+                self.refresh_flash_content();
+                let config = self.firmware_config.clone();
+
+                Command::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            let mut log: Vec<String> = Vec::new();
+                            let mut p = |s: &str| { log.push(s.to_string()); };
+
+                            // Patch config.h
+                            p("Applying configuration to config.h…");
+                            let config_h = src_dir.join("config.h");
+                            let original = std::fs::read_to_string(&config_h)
+                                .map_err(|e| format!("Cannot read config.h: {}", e))?;
+                            let patched = crate::firmware::patch_config_h(&original, &config);
+                            std::fs::write(&config_h, patched.as_bytes())
+                                .map_err(|e| format!("Cannot write config.h: {}", e))?;
+                            p("config.h updated.");
+
+                            // Compile
+                            crate::firmware::compile_sketch(&cli, &src_dir, &mut p)
+                                .map_err(|e| e.to_string())?;
+
+                            Ok::<_, String>((cli, src_dir, log))
+                        })
+                        .await
+                        .map_err(|e| e.to_string())
+                        .and_then(|r| r)
+                    },
+                    |result| match result {
+                        Ok((cli, src, log)) => Message::FwCompiled(Ok((cli, src, log))),
+                        Err(e) => Message::FwCompiled(Err(e)),
+                    },
+                )
+            }
+
+            Message::FwCompiled(Err(e)) => {
+                let short = e.lines().next().unwrap_or(&e).to_string();
+                for line in e.lines().take(20) {
+                    self.flash_log.push(line.to_string());
+                }
+                self.flash_status = FlashStatus::Failed(short);
+                self.refresh_flash_content();
+                Command::none()
+            }
+
+            Message::FwCompiled(Ok((cli, src_dir, log_lines))) => {
+                for line in &log_lines {
+                    self.flash_log.push(line.clone());
+                }
+                self.flash_status = FlashStatus::Busy("Uploading (resetting to bootloader)…".to_string());
+                self.refresh_flash_content();
+                let port = self.selected_port.clone().unwrap_or_else(|| "COM1".to_string());
+
+                // Pass the original application port — arduino-cli handles the
+                // 1200-baud reset and bootloader port detection internally.
+                Command::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            let mut log: Vec<String> = Vec::new();
+                            let mut p = |s: &str| { log.push(s.to_string()); };
+                            crate::firmware::upload_sketch(&cli, &src_dir, &port, &mut p)
+                                .map_err(|e| e.to_string())?;
+                            Ok::<_, String>(log)
+                        })
+                        .await
+                        .map_err(|e| e.to_string())
+                        .and_then(|r| r)
+                    },
+                    |result| Message::FwUploadDone(result),
+                )
+            }
+
+            Message::FwBootloaderReady(Err(e)) => {
+                // Pipeline no longer uses this step, but keep it for the exhaustive match
+                self.flash_log.push(format!("[Error] {}", e));
+                self.flash_status = FlashStatus::Failed(e);
+                self.refresh_flash_content();
+                Command::none()
+            }
+            Message::FwBootloaderReady(Ok(_)) => Command::none(),
+
+            Message::FwUploadDone(Ok(log_lines)) => {
+                for line in &log_lines {
+                    self.flash_log.push(line.clone());
+                }
+                self.flash_log.push("Flash complete!".to_string());
+                self.flash_status = FlashStatus::Done;
+                self.refresh_flash_content();
+                if self.fw_reconnect_after_flash {
+                    self.fw_reconnect_after_flash = false;
+                    if let Some(port_name) = self.selected_port.clone() {
+                        self.connection = ConnectionState::Connecting;
+                        self.flash_log.push(format!("Reconnecting to {}…", port_name));
+                        self.refresh_flash_content();
+                        return Command::perform(
+                            async move {
+                                tokio::task::spawn_blocking(move || crate::serial::open_port(&port_name))
+                                    .await
+                                    .map_err(|e| e.to_string())
+                                    .and_then(|r| r)
+                            },
+                            Message::Connected,
+                        );
+                    }
+                }
+                Command::none()
+            }
+
+            Message::FwUploadDone(Err(e)) => {
+                self.flash_log.push(format!("[Error] {}", e));
+                self.flash_status = FlashStatus::Failed(e);
+                self.refresh_flash_content();
+                if self.fw_reconnect_after_flash {
+                    self.fw_reconnect_after_flash = false;
+                    if let Some(port_name) = self.selected_port.clone() {
+                        self.connection = ConnectionState::Connecting;
+                        return Command::perform(
+                            async move {
+                                tokio::task::spawn_blocking(move || crate::serial::open_port(&port_name))
+                                    .await
+                                    .map_err(|e| e.to_string())
+                                    .and_then(|r| r)
+                            },
+                            Message::Connected,
+                        );
+                    }
+                }
+                Command::none()
+            }
+
+            // ---- Firmware & Config (legacy variants still compiled) ----
+            Message::FwCoreEnsured(_) => Command::none(),
+
+            Message::FwLogAction(action) => {
+                use iced::widget::text_editor::Action;
+                if !matches!(action, Action::Edit(_)) {
+                    self.flash_log_content.perform(action);
+                }
                 Command::none()
             }
 
@@ -1149,6 +1465,10 @@ impl Application for NevcApp {
 // ---------------------------------------------------------------------------
 
 impl NevcApp {
+    pub fn refresh_flash_content(&mut self) {
+        self.flash_log_content = iced::widget::text_editor::Content::with_text(&self.flash_log.join("\n"));
+    }
+
     pub fn push_log(&mut self, level: LogLevel, msg: impl Into<String>) {
         use std::time::{SystemTime, UNIX_EPOCH};
         let secs = SystemTime::now()
@@ -1235,10 +1555,9 @@ impl NevcApp {
     fn view_tab_bar(&self) -> Element<'_, Message> {
         let tabs: &[(Panel, &str)] = &[
             (Panel::Connection, "Connection"),
-            (Panel::Firmware, "Firmware"),
+            (Panel::Firmware, "Firmware & Config"),
             (Panel::MotorControl, "Motor Control"),
             (Panel::Graphs, "Graphs"),
-            (Panel::Configuration, "Configuration"),
             (Panel::Log, "Log"),
         ];
 
