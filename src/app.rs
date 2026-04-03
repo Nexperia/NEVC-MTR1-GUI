@@ -1535,19 +1535,28 @@ impl NevcApp {
             ConnectionState::Connected => text("● Connected").size(13),
         };
 
+        static LOGO_BYTES: &[u8] = include_bytes!("../assets/logo/nexperia_logo_light.svg");
+        let logo = iced::widget::svg(
+            iced::widget::svg::Handle::from_memory(LOGO_BYTES),
+        )
+        .width(Length::Shrink)
+        .height(28);
+
         container(
             row![
-                text("Nexperia Motor Driver GUI").size(22),
+                logo,
+                iced::widget::Space::with_width(8),
+                text("Motor Evaluation Kit").size(14),
                 iced::widget::Space::with_width(Length::Fill),
                 connected_badge,
                 iced::widget::Space::with_width(8),
-                text("NEVC-MTR1").size(16),
+                text("MTR1 series").size(16),
             ]
             .spacing(4)
             .align_items(iced::Alignment::Center),
         )
         .width(Length::Fill)
-        .padding([10, 20])
+        .padding([8, 12, 8, 12])
         .style(iced::theme::Container::Box)
         .into()
     }
