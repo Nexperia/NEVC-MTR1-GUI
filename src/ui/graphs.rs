@@ -1,6 +1,15 @@
 use std::collections::VecDeque;
 
 use iced::widget::{button, canvas, checkbox, column, row, scrollable, slider, text, Canvas};
+
+/// Windows font for symbol glyphs (▶ ■ ●) absent from Ubuntu TTF.
+/// Segoe UI Symbol ships on all Windows versions and covers all geometric shapes.
+const SYM_FONT: iced::Font = iced::Font {
+    family: iced::font::Family::Name("Segoe UI Symbol"),
+    weight: iced::font::Weight::Normal,
+    style: iced::font::Style::Normal,
+    stretch: iced::font::Stretch::Normal,
+};
 use iced::{Alignment, Color, Element, Length, Pixels, Point, Rectangle};
 
 use crate::app::{
@@ -15,14 +24,14 @@ use crate::serial::ConnectionState;
 // ---------------------------------------------------------------------------
 
 const PALETTE: [Color; NUM_CHANNELS] = [
-    Color { r: 0.28, g: 0.73, b: 0.96, a: 1.0 }, // Speed             – sky blue
-    Color { r: 0.96, g: 0.68, b: 0.26, a: 1.0 }, // System Current    – amber
-    Color { r: 0.40, g: 0.86, b: 0.47, a: 1.0 }, // Phase U Current   – green
-    Color { r: 0.96, g: 0.41, b: 0.58, a: 1.0 }, // Phase V Current   – rose
-    Color { r: 0.68, g: 0.52, b: 0.96, a: 1.0 }, // Phase W Current   – violet
-    Color { r: 0.96, g: 0.96, b: 0.40, a: 1.0 }, // Duty Cycle        – yellow
-    Color { r: 0.96, g: 0.55, b: 0.33, a: 1.0 }, // System Voltage    – orange
-    Color { r: 0.80, g: 0.85, b: 0.90, a: 1.0 }, // System Power      – silver
+    Color { r: 0.902, g: 0.302, b: 0.122, a: 1.0 }, // Speed             – #E64D1F
+    Color { r: 0.012, g: 0.435, b: 0.482, a: 1.0 }, // System Current    – #036F7B
+    Color { r: 0.090, g: 0.290, b: 0.357, a: 1.0 }, // Phase U Current   – #174A5B
+    Color { r: 0.278, g: 0.592, b: 0.659, a: 1.0 }, // Phase V Current   – #4797A8
+    Color { r: 0.420, g: 0.420, b: 0.420, a: 1.0 }, // Phase W Current   – #6B6B6B
+    Color { r: 0.000, g: 0.337, b: 0.302, a: 1.0 }, // Duty Cycle        – #00564D
+    Color { r: 0.447, g: 0.133, b: 0.341, a: 1.0 }, // System Voltage    – #722257
+    Color { r: 0.643, g: 0.067, b: 0.067, a: 1.0 }, // System Power      – #A41111
 ];
 
 // One colour per unit group (RPM, A, %, V, W)
@@ -34,7 +43,7 @@ const GROUP_PALETTE: [Color; 5] = [
     Color { r: 0.80, g: 0.85, b: 0.90, a: 1.0 },
 ];
 
-const BG: Color = Color { r: 0.07, g: 0.07, b: 0.09, a: 1.0 };
+const BG: Color = Color { r: 0.93, g: 0.93, b: 0.93, a: 1.0 };
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -132,8 +141,8 @@ impl<'a> canvas::Program<Message> for OverlayCanvas<'a> {
 
         frame.fill_rectangle(Point::ORIGIN, bounds.size(), BG);
 
-        // Horizontal grid lines
-        let gc = Color { r: 1.0, g: 1.0, b: 1.0, a: 0.07 };
+        // Horizontal grid lines (dark on light bg)
+        let gc = Color { r: 0.0, g: 0.0, b: 0.0, a: 0.10 };
         for i in 1u8..4 {
             let y = MT + ph * (i as f32 / 4.0);
             let line = canvas::Path::new(|b| { b.move_to(Point::new(ML, y)); b.line_to(Point::new(ML + pw, y)); });
@@ -148,7 +157,7 @@ impl<'a> canvas::Program<Message> for OverlayCanvas<'a> {
         let t_range = if (t_max - t_min).abs() < 1e-6 { 1.0 } else { t_max - t_min };
 
         // Time-axis ticks
-        let tc = Color { r: 0.55, g: 0.55, b: 0.55, a: 0.8 };
+        let tc = Color { r: 0.35, g: 0.35, b: 0.35, a: 1.0 };
         let dt = nice_interval(t_range);
         let mut t = (t_min / dt).ceil() * dt;
         while t <= t_max + 1e-6 {
@@ -183,7 +192,7 @@ impl<'a> canvas::Program<Message> for OverlayCanvas<'a> {
             frame.stroke(&path, canvas::Stroke::default().with_color(PALETTE[ch]).with_width(1.5));
         }
 
-        // Unit-group range labels — right-aligned, stacked in top-right corner
+        // Unit-group range labels - right-aligned, stacked in top-right corner
         let active_groups: Vec<usize> = (0..5)
             .filter(|&g| (0..NUM_CHANNELS).any(|ch| self.channels[ch] && GRAPH_CHANNEL_UNIT_GROUP[ch] == g))
             .collect();
@@ -233,7 +242,7 @@ impl<'a> canvas::Program<Message> for SingleChannelCanvas<'a> {
 
         frame.fill_rectangle(Point::ORIGIN, bounds.size(), BG);
 
-        let gc = Color { r: 1.0, g: 1.0, b: 1.0, a: 0.07 };
+        let gc = Color { r: 0.0, g: 0.0, b: 0.0, a: 0.10 };
         for i in 1u8..4 {
             let y = MT + ph * (i as f32 / 4.0);
             let line = canvas::Path::new(|b| { b.move_to(Point::new(ML, y)); b.line_to(Point::new(ML + pw, y)); });
@@ -249,7 +258,7 @@ impl<'a> canvas::Program<Message> for SingleChannelCanvas<'a> {
         let y_range = if (self.ymax - self.ymin).abs() < 1e-9 { 1.0 } else { self.ymax - self.ymin };
 
         // Y-axis labels
-        let lc = Color { r: 0.65, g: 0.65, b: 0.65, a: 0.9 };
+        let lc = Color { r: 0.25, g: 0.25, b: 0.25, a: 1.0 };
         frame.fill_text(ct(fmt_val(self.ymax), Point::new(ML - 3.0, MT),
             lc, 9.0, iced::alignment::Horizontal::Right, iced::alignment::Vertical::Top));
         frame.fill_text(ct(fmt_val((self.ymax + self.ymin) / 2.0), Point::new(ML - 3.0, MT + ph * 0.5),
@@ -261,7 +270,7 @@ impl<'a> canvas::Program<Message> for SingleChannelCanvas<'a> {
             color, 9.0, iced::alignment::Horizontal::Left, iced::alignment::Vertical::Center));
 
         // X-axis ticks
-        let tc = Color { r: 0.55, g: 0.55, b: 0.55, a: 0.8 };
+        let tc = Color { r: 0.35, g: 0.35, b: 0.35, a: 1.0 };
         let dt = nice_interval(t_range);
         let mut t = (t_min / dt).ceil() * dt;
         while t <= t_max + 1e-6 {
@@ -297,9 +306,8 @@ impl<'a> canvas::Program<Message> for SingleChannelCanvas<'a> {
 pub fn view(app: &NevcApp) -> Element<'_, Message> {
     if app.connection != ConnectionState::Connected {
         return column![
-            text("Graphs").size(24),
             iced::widget::Space::with_height(20),
-            text("Not connected \u{2014} connect to the board to enable live graphing.").size(14),
+            text("Not connected - connect to the board to enable live graphing.").size(14),
         ]
         .spacing(0)
         .into();
@@ -311,9 +319,9 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
     let (start_lbl, start_style) = if app.graph_running {
         ("\u{25a0} Stop", iced::theme::Button::Destructive)
     } else {
-        ("\u{25ba} Start", iced::theme::Button::Positive)
+        ("\u{25b6} Start", iced::theme::Button::Positive)
     };
-    let start_btn = button(text(start_lbl).size(14))
+    let start_btn = button(text(start_lbl).size(14).font(SYM_FONT))
         .on_press(Message::GraphStartStop)
         .style(start_style)
         .padding([6, 16]);
@@ -366,6 +374,7 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
         checkbox(lbl, app.graph_channels[i])
             .on_toggle(move |_| Message::GraphChannelToggled(i))
             .size(13)
+            .style(iced::theme::Checkbox::Custom(Box::new(crate::ui::style::GraphCheckbox)))
             .into()
     };
 
@@ -384,14 +393,20 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
                 Some(v) => format!("\u{25cf} {} {:.3}\u{202f}{}", GRAPH_CHANNEL_NAMES[i], v, GRAPH_CHANNEL_UNITS[i]),
                 None => format!("\u{25cf} {} --", GRAPH_CHANNEL_NAMES[i]),
             };
-            text(s).size(14).style(iced::theme::Text::Color(PALETTE[i])).into()
+            text(s).size(14).font(SYM_FONT).style(iced::theme::Text::Color(PALETTE[i])).into()
         })
         .collect();
 
     let legend_row: Element<'_, Message> = if legend.is_empty() {
         text("Select channels above to begin graphing.").size(12).into()
     } else {
-        row(legend).spacing(16).into()
+        let mut chunks = legend.into_iter().peekable();
+        let mut leg_rows: Vec<Element<'_, Message>> = Vec::new();
+        while chunks.peek().is_some() {
+            let items: Vec<Element<'_, Message>> = chunks.by_ref().take(4).collect();
+            leg_rows.push(row(items).spacing(16).into());
+        }
+        column(leg_rows).spacing(4).into()
     };
 
     // ---- Plot ---------------------------------------------------------------
@@ -402,7 +417,7 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
         }
     } else {
         iced::widget::container(
-            text("Press \u{25ba} Start to begin recording.").size(13),
+            text("Press \u{25b6} Start to begin recording.").size(13).font(SYM_FONT),
         )
         .width(Length::Fill)
         .height(Length::Fixed(340.0))
@@ -413,8 +428,6 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
     };
 
     let content = column![
-        text("Graphs").size(24),
-        iced::widget::Space::with_height(10),
         controls,
         iced::widget::Space::with_height(8),
         channel_row,
@@ -424,7 +437,7 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
         plot,
     ]
     .spacing(0)
-    .padding(4);
+    .padding(iced::Padding { top: 4.0, right: 18.0, bottom: 4.0, left: 4.0 });
 
     scrollable(content).width(Length::Fill).height(Length::Fill).into()
 }

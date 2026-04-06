@@ -23,9 +23,9 @@ pub struct PortInfo {
 impl std::fmt::Display for PortInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.is_arduino {
-            write!(f, "{} — Arduino Leonardo", self.name)
+            write!(f, "{} - Arduino Leonardo", self.name)
         } else {
-            write!(f, "{} — {}", self.name, self.description)
+            write!(f, "{} - {}", self.name, self.description)
         }
     }
 }
@@ -42,7 +42,7 @@ pub enum ConnectionState {
 }
 
 // ---------------------------------------------------------------------------
-// Serial handle — wraps an open port in Arc<Mutex> for safe sharing across tasks
+// Serial handle - wraps an open port in Arc<Mutex> for safe sharing across tasks
 // ---------------------------------------------------------------------------
 
 /// Thread-safe handle to an open serial port.
@@ -62,7 +62,7 @@ impl std::fmt::Debug for SerialHandle {
 
 /// Open the SCPI serial port with correct settings per spec:
 /// 115200 baud, 8N1, no flow control, DTR+RTS enabled, 500 ms read timeout.
-/// This is a blocking call — run via `tokio::task::spawn_blocking`.
+/// This is a blocking call - run via `tokio::task::spawn_blocking`.
 pub fn open_port(port_name: &str) -> Result<SerialHandle, String> {
     let mut port = serialport::new(port_name, 115_200)
         .data_bits(serialport::DataBits::Eight)
@@ -82,7 +82,7 @@ pub fn open_port(port_name: &str) -> Result<SerialHandle, String> {
 }
 
 // ---------------------------------------------------------------------------
-// SCPI I/O — blocking, run via spawn_blocking
+// SCPI I/O - blocking, run via spawn_blocking
 // ---------------------------------------------------------------------------
 
 /// Send a SCPI query command and return the response line.
@@ -151,7 +151,7 @@ const ARDUINO_BOOTLOADER_PID: u16 = 0x0036;
 // ---------------------------------------------------------------------------
 
 /// Return all available serial ports, flagging Arduino Leonardo entries.
-/// Called synchronously — wrap in `tokio::task::spawn_blocking` for async contexts.
+/// Called synchronously - wrap in `tokio::task::spawn_blocking` for async contexts.
 pub fn list_ports() -> Vec<PortInfo> {
     let raw = match serialport::available_ports() {
         Ok(p) => p,

@@ -7,9 +7,8 @@ use crate::serial::ConnectionState;
 pub fn view(app: &NevcApp) -> Element<'_, Message> {
     if app.connection != ConnectionState::Connected {
         return column![
-            text("Configuration").size(24),
             iced::widget::Space::with_height(20),
-            text("Not connected — connect to the board to view firmware configuration.").size(14),
+            text("Not connected - connect to the board to view firmware configuration.").size(14),
         ]
         .spacing(0)
         .into();
@@ -35,13 +34,11 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
     };
 
     let content = column![
-        text("Configuration").size(24),
-        iced::widget::Space::with_height(16),
         text("Firmware Constants").size(18),
         iced::widget::Space::with_height(8),
         serial_info,
         iced::widget::Space::with_height(16),
-        text("Full constant mapping and editable fields — Stage 6.").size(13),
+        text("Full constant mapping and editable fields - Stage 6.").size(13),
     ]
     .spacing(0)
     .max_width(700);

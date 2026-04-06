@@ -82,10 +82,8 @@ pub const GROUP_LABELS: &[(&str, std::ops::Range<usize>)] = &[
 
 pub fn view(app: &NevcApp) -> Element<'_, Message> {
     // -----------------------------------------------------------------------
-    // Header and source buttons
+    // Source buttons
     // -----------------------------------------------------------------------
-    let title = text("Firmware & Configuration").size(22);
-
     let can_load_device = app.connection == ConnectionState::Connected
         && app.idn_serial.is_some();
 
@@ -109,7 +107,7 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
         FwConfigSource::Device if can_load_device =>
             text("Values loaded from connected device IDN serial field.").size(12),
         FwConfigSource::Device =>
-            text("Device not connected — connect and query IDN to load device values.").size(12),
+            text("Device not connected - connect and query IDN to load device values.").size(12),
         FwConfigSource::Repo =>
             text("Values loaded from repo defaults (main/config.h).").size(12),
     };
@@ -148,11 +146,11 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
                     let is_true = input_val.to_lowercase() == "true" || input_val == "1";
                     row![
                         button(text("TRUE").size(12))
-                            .style(if is_true { iced::theme::Button::Primary } else { iced::theme::Button::Secondary })
+                            .style(if is_true { iced::theme::Button::Custom(Box::new(crate::ui::style::FilledButton)) } else { iced::theme::Button::Secondary })
                             .on_press(Message::FwParamChanged(idx, "true".to_string()))
                             .padding([3, 10]),
                         button(text("FALSE").size(12))
-                            .style(if !is_true { iced::theme::Button::Primary } else { iced::theme::Button::Secondary })
+                            .style(if !is_true { iced::theme::Button::Custom(Box::new(crate::ui::style::FilledButton)) } else { iced::theme::Button::Secondary })
                             .on_press(Message::FwParamChanged(idx, "false".to_string()))
                             .padding([3, 10]),
                     ]
@@ -163,11 +161,11 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
                     let is_ramp = input_val == "1" || input_val.to_uppercase().contains("RAMP");
                     row![
                         button(text("RAMP").size(12))
-                            .style(if is_ramp { iced::theme::Button::Primary } else { iced::theme::Button::Secondary })
+                            .style(if is_ramp { iced::theme::Button::Custom(Box::new(crate::ui::style::FilledButton)) } else { iced::theme::Button::Secondary })
                             .on_press(Message::FwParamChanged(idx, "1".to_string()))
                             .padding([3, 10]),
                         button(text("COAST").size(12))
-                            .style(if !is_ramp { iced::theme::Button::Primary } else { iced::theme::Button::Secondary })
+                            .style(if !is_ramp { iced::theme::Button::Custom(Box::new(crate::ui::style::FilledButton)) } else { iced::theme::Button::Secondary })
                             .on_press(Message::FwParamChanged(idx, "0".to_string()))
                             .padding([3, 10]),
                     ]
@@ -178,11 +176,11 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
                     let is_closed = input_val == "1" || input_val.to_uppercase().contains("CLOSED");
                     row![
                         button(text("OPEN LOOP").size(12))
-                            .style(if !is_closed { iced::theme::Button::Primary } else { iced::theme::Button::Secondary })
+                            .style(if !is_closed { iced::theme::Button::Custom(Box::new(crate::ui::style::FilledButton)) } else { iced::theme::Button::Secondary })
                             .on_press(Message::FwParamChanged(idx, "0".to_string()))
                             .padding([3, 10]),
                         button(text("CLOSED LOOP").size(12))
-                            .style(if is_closed { iced::theme::Button::Primary } else { iced::theme::Button::Secondary })
+                            .style(if is_closed { iced::theme::Button::Custom(Box::new(crate::ui::style::FilledButton)) } else { iced::theme::Button::Secondary })
                             .on_press(Message::FwParamChanged(idx, "1".to_string()))
                             .padding([3, 10]),
                     ]
@@ -246,7 +244,7 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
         .style(if flash_busy {
             iced::theme::Button::Secondary
         } else {
-            iced::theme::Button::Primary
+            iced::theme::Button::Custom(Box::new(crate::ui::style::FilledButton))
         })
         .padding([8, 18]);
         if !flash_busy {
@@ -273,7 +271,7 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
             .into()
     };
 
-    // Flash log — selectable/copyable
+    // Flash log - selectable/copyable
     let log_section: Element<Message> = iced::widget::text_editor(&app.flash_log_content)
         .on_action(Message::FwLogAction)
         .height(200)
@@ -300,8 +298,6 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
     // Compose full panel
     // -----------------------------------------------------------------------
     let mut content_children: Vec<Element<Message>> = vec![
-        title.into(),
-        iced::widget::Space::with_height(12).into(),
         source_row.into(),
         source_hint.into(),
         iced::widget::Space::with_height(16).into(),

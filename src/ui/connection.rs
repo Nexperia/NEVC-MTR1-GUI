@@ -1,7 +1,7 @@
 use iced::widget::{button, column, container, pick_list, row, scrollable, text};
 use iced::{Alignment, Element, Length};
 
-use crate::app::{Message, NevcApp};
+use crate::app::{COLOR_CONNECTED, COLOR_DISCONNECTED, Message, NevcApp};
 use crate::serial::ConnectionState;
 
 pub fn view(app: &NevcApp) -> Element<'_, Message> {
@@ -16,9 +16,9 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
         .iter()
         .map(|p| {
             if p.is_arduino {
-                format!("{} — Arduino Leonardo", p.name)
+                format!("{} - Arduino Leonardo", p.name)
             } else {
-                format!("{} — {}", p.name, p.description)
+                format!("{} - {}", p.name, p.description)
             }
         })
         .collect();
@@ -46,6 +46,7 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
 
     let refresh_btn = button(text("Refresh").size(13))
         .on_press(Message::RefreshPorts)
+        .style(iced::theme::Button::Secondary)
         .padding([5, 10]);
 
     // -----------------------------------------------------------------------
@@ -67,7 +68,7 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
             .into()
     } else {
         let mut b = button(text("Connect").size(13))
-            .style(iced::theme::Button::Primary)
+            .style(iced::theme::Button::Custom(Box::new(crate::ui::style::FilledButton)))
             .padding([5, 14]);
         if can_connect {
             b = b.on_press(Message::ConnectPressed);
@@ -82,10 +83,25 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
     // -----------------------------------------------------------------------
     // Connection status
     // -----------------------------------------------------------------------
-    let status_text = match app.connection {
-        ConnectionState::Disconnected => "● Disconnected",
-        ConnectionState::Connecting => "○ Connecting…",
-        ConnectionState::Connected => "● Connected",
+    let status_badge: iced::widget::Row<'_, Message> = match app.connection {
+        ConnectionState::Disconnected => iced::widget::row![
+            iced::widget::container(iced::widget::Space::new(8, 8))
+                .style(iced::theme::Container::Custom(Box::new(crate::ui::style::Indicator(COLOR_DISCONNECTED)))),
+            iced::widget::Space::with_width(5),
+            text("Disconnected").size(15).style(iced::theme::Text::Color(COLOR_DISCONNECTED)),
+        ].align_items(iced::Alignment::Center),
+        ConnectionState::Connecting => iced::widget::row![
+            iced::widget::container(iced::widget::Space::new(8, 8))
+                .style(iced::theme::Container::Custom(Box::new(crate::ui::style::Indicator(iced::Color::from_rgb8(0xAA, 0xAA, 0xAA))))),
+            iced::widget::Space::with_width(5),
+            text("Connecting...").size(15),
+        ].align_items(iced::Alignment::Center),
+        ConnectionState::Connected => iced::widget::row![
+            iced::widget::container(iced::widget::Space::new(8, 8))
+                .style(iced::theme::Container::Custom(Box::new(crate::ui::style::Indicator(COLOR_CONNECTED)))),
+            iced::widget::Space::with_width(5),
+            text("Connected").size(15).style(iced::theme::Text::Color(COLOR_CONNECTED)),
+        ].align_items(iced::Alignment::Center),
     };
 
     // -----------------------------------------------------------------------
@@ -147,13 +163,11 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
     // Compose the panel
     // -----------------------------------------------------------------------
     let content = column![
-        text("Connection").size(24),
-        iced::widget::Space::with_height(16),
         text("COM Port").size(14),
         iced::widget::Space::with_height(6),
         controls,
         iced::widget::Space::with_height(8),
-        text(status_text).size(15),
+        status_badge,
         iced::widget::Space::with_height(24),
         firmware_section,
         iced::widget::Space::with_height(20),

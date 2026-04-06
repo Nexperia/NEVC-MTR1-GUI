@@ -1,54 +1,36 @@
-use iced::widget::{button, column, container, row, scrollable, text};
+use iced::widget::{button, column, row, text, text_editor};
 use iced::{Element, Length};
 
-use crate::app::{LogLevel, Message, NevcApp};
+use crate::app::{Message, NevcApp};
 
 pub fn view(app: &NevcApp) -> Element<'_, Message> {
     let clear_btn = button(text("Clear").size(13))
         .on_press(Message::ClearLog)
+        .style(iced::theme::Button::Secondary)
+        .padding([4, 10]);
+
+    let download_btn = button(text("Download Log").size(13))
+        .on_press(Message::DownloadLog)
+        .style(iced::theme::Button::Custom(Box::new(crate::ui::style::FilledButton)))
         .padding([4, 10]);
 
     let header_row = row![
-        text("Log").size(24),
         iced::widget::Space::with_width(Length::Fill),
+        download_btn,
+        iced::widget::Space::with_width(8),
         clear_btn,
     ]
     .align_items(iced::Alignment::Center);
 
-    let entries: Vec<Element<Message>> = if app.log.is_empty() {
-        vec![text("No events yet.").size(13).into()]
-    } else {
-        app.log
-            .iter()
-            .rev() // newest first
-            .map(|entry| {
-                let prefix = match entry.level {
-                    LogLevel::Info  => "[INFO ]",
-                    LogLevel::Warn  => "[WARN ]",
-                    LogLevel::Error => "[ERROR]",
-                };
-                row![
-                    text(&entry.timestamp).size(12).width(Length::Fixed(62.0)),
-                    text(prefix).size(12).width(Length::Fixed(60.0)),
-                    text(&entry.message).size(12),
-                ]
-                .spacing(6)
-                .into()
-            })
-            .collect()
-    };
-
-    let log_list = scrollable(
-        container(column(entries).spacing(3).padding(4))
-            .width(Length::Fill),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill);
+    let editor = text_editor(&app.log_content)
+        .on_action(Message::LogAction)
+        .font(iced::Font::MONOSPACE)
+        .height(Length::Fill);
 
     column![
         header_row,
         iced::widget::Space::with_height(10),
-        log_list,
+        editor,
     ]
     .spacing(0)
     .into()

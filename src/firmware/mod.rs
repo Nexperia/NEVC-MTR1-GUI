@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Firmware management — FirmwareConfig, Arduino CLI, compile + upload
+// Firmware management - FirmwareConfig, Arduino CLI, compile + upload
 // ---------------------------------------------------------------------------
 
 #![allow(dead_code)]
@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::io;
 
 // ---------------------------------------------------------------------------
-// FirmwareConfig — 26 user-settable parameters from main/config.h
+// FirmwareConfig - 26 user-settable parameters from main/config.h
 // ---------------------------------------------------------------------------
 
 /// All 26 user-configurable parameters in the NEVC-MTR1 firmware.
@@ -371,7 +371,7 @@ pub fn firmware_dir() -> PathBuf {
 }
 
 // ---------------------------------------------------------------------------
-// Arduino CLI — download and manage
+// Arduino CLI - download and manage
 // ---------------------------------------------------------------------------
 
 const ARDUINO_CLI_EXE: &str = "arduino-cli.exe";
@@ -389,7 +389,7 @@ pub fn ensure_arduino_cli(mut progress: impl FnMut(&str)) -> anyhow::Result<Path
         return Ok(exe);
     }
 
-    progress("arduino-cli.exe not found — fetching download URL from GitHub…");
+    progress("arduino-cli.exe not found - fetching download URL from GitHub...");
     std::fs::create_dir_all(&dir)?;
 
     // Fetch latest release JSON
@@ -458,7 +458,7 @@ pub fn ensure_avr_core(cli: &Path, mut progress: impl FnMut(&str)) -> anyhow::Re
 }
 
 // ---------------------------------------------------------------------------
-// Firmware source — download and cache
+// Firmware source - download and cache
 // ---------------------------------------------------------------------------
 
 const FIRMWARE_REPO_ZIP_URL: &str =
@@ -545,7 +545,7 @@ pub fn compile_sketch(cli: &Path, sketch_dir: &Path, mut progress: impl FnMut(&s
 
 /// Upload the compiled sketch to the board.
 ///
-/// Pass the **application port** (e.g. COM4) — `arduino-cli` handles the
+/// Pass the **application port** (e.g. COM4) - `arduino-cli` handles the
 /// 1200-baud reset and bootloader port detection internally for Leonardo/Caterina,
 /// exactly the same way Arduino IDE does.
 pub fn upload_sketch(

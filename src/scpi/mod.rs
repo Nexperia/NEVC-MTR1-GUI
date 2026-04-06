@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// SCPI layer — command strings, response parsing, validation
+// SCPI layer - command strings, response parsing, validation
 // Stage 2 will add the actual send/receive implementation.
 // ---------------------------------------------------------------------------
 

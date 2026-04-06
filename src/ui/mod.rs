@@ -4,6 +4,7 @@ pub mod firmware;
 pub mod graphs;
 pub mod log_panel;
 pub mod motor;
+pub mod style;
 
 /// Top-level navigation panels.
 #[derive(Debug, Clone, PartialEq)]

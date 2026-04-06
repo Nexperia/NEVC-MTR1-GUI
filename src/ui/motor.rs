@@ -90,12 +90,12 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
     // Direction (buttons disabled while a direction-change is in flight)
     // -----------------------------------------------------------------------
     let fwd_style = if app.motor_direction == Direction::Forward {
-        iced::theme::Button::Primary
+        iced::theme::Button::Custom(Box::new(crate::ui::style::FilledButton))
     } else {
         iced::theme::Button::Secondary
     };
     let rev_style = if app.motor_direction == Direction::Reverse {
-        iced::theme::Button::Primary
+        iced::theme::Button::Custom(Box::new(crate::ui::style::FilledButton))
     } else {
         iced::theme::Button::Secondary
     };
@@ -150,12 +150,13 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
         measurement_row("System Voltage",   app.gate_voltage,       "V"),
         row![
             text("Direction (meas.):").size(13).width(Length::Fixed(160.0)),
-            text(app.measured_direction.as_deref().unwrap_or("—")).size(13),
+            text(app.measured_direction.as_deref().unwrap_or("-")).size(13),
         ]
         .spacing(8),
         iced::widget::Space::with_height(8),
         button(text("Refresh Measurements").size(13))
             .on_press(Message::QueryMeasurements)
+            .style(iced::theme::Button::Secondary)
             .padding([5, 12]),
     ]
     .spacing(4);
@@ -164,8 +165,6 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
     // Compose
     // -----------------------------------------------------------------------
     let content = column![
-        text("Motor Control").size(24),
-        iced::widget::Space::with_height(16),
         enable_btn,
         iced::widget::Space::with_height(16),
         freq_section,
@@ -185,9 +184,8 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
 
 fn not_connected_view<'a>() -> Element<'a, Message> {
     column![
-        text("Motor Control").size(24),
         iced::widget::Space::with_height(20),
-        text("Not connected — go to the Connection panel and connect to the board first.").size(14),
+        text("Not connected - go to the Connection panel and connect to the board first.").size(14),
     ]
     .spacing(0)
     .into()
@@ -196,7 +194,7 @@ fn not_connected_view<'a>() -> Element<'a, Message> {
 fn measurement_row<'a>(label: &'a str, value: Option<f32>, unit: &'a str) -> Element<'a, Message> {
     let value_str = match value {
         Some(v) => format!("{:.3} {}", v, unit),
-        None => String::from("—"),
+        None => String::from("-"),
     };
     row![
         text(format!("{}:", label)).size(13).width(Length::Fixed(160.0)),

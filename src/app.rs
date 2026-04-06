@@ -5,6 +5,15 @@ use crate::serial::{ConnectionState, PortInfo, SerialHandle};
 use crate::ui::{Panel, config, connection, firmware, graphs, log_panel, motor};
 
 // ---------------------------------------------------------------------------
+// Brand colours (shared across UI modules)
+// ---------------------------------------------------------------------------
+
+pub const COLOR_PETROL: iced::Color = iced::Color { r: 3.0 / 255.0, g: 111.0 / 255.0, b: 123.0 / 255.0, a: 1.0 };
+pub const COLOR_ORANGE: iced::Color = iced::Color { r: 230.0 / 255.0, g: 77.0 / 255.0, b: 31.0 / 255.0, a: 1.0 };
+pub const COLOR_CONNECTED: iced::Color = iced::Color { r: 0.18, g: 0.64, b: 0.31, a: 1.0 };
+pub const COLOR_DISCONNECTED: iced::Color = iced::Color { r: 0.80, g: 0.13, b: 0.13, a: 1.0 };
+
+// ---------------------------------------------------------------------------
 // Graph types
 // ---------------------------------------------------------------------------
 
@@ -94,6 +103,7 @@ pub enum LogLevel {
 
 pub struct NevcApp {
     pub active_panel: Panel,
+    pub hovered_tab: Option<Panel>,
 
     // Serial / connection
     pub connection: ConnectionState,
@@ -130,6 +140,7 @@ pub struct NevcApp {
 
     // Event log (shown in Log panel)
     pub log: Vec<LogEntry>,
+    pub log_content: iced::widget::text_editor::Content,
 
     // Firmware + Config panel
     pub flash_log: Vec<String>,
@@ -169,7 +180,7 @@ impl std::fmt::Display for Direction {
 }
 
 // ---------------------------------------------------------------------------
-// Messages — every user interaction and async result
+// Messages - every user interaction and async result
 // ---------------------------------------------------------------------------
 
 #[allow(dead_code)] // several variants are wired up in update() but not yet sent from the UI (Stage 2+)
@@ -177,6 +188,7 @@ impl std::fmt::Display for Direction {
 pub enum Message {
     // Navigation
     TabSelected(Panel),
+    TabHovered(Option<Panel>),
 
     // Connection panel
     RefreshPorts,
@@ -227,7 +239,7 @@ pub enum Message {
     FwParamChanged(usize, String),
     /// Start the full compile+upload pipeline
     FwCompileAndUpload,
-    // Flash pipeline step results — each carries (accumulated_data, log_lines)
+    // Flash pipeline step results - each carries (accumulated_data, log_lines)
     FwCliEnsured(Result<(std::path::PathBuf, Vec<String>), String>),
     FwCoreEnsured(Result<(), String>),
     FwSourceEnsured(Result<(std::path::PathBuf, std::path::PathBuf, Vec<String>), String>),
@@ -258,6 +270,8 @@ pub enum Message {
     // Generic status
     StatusMessage(String),
     ClearLog,
+    LogAction(iced::widget::text_editor::Action),
+    DownloadLog,
 }
 
 // ---------------------------------------------------------------------------
@@ -273,6 +287,7 @@ impl Application for NevcApp {
     fn new(_flags: ()) -> (Self, Command<Message>) {
         let app = Self {
             active_panel: Panel::Connection,
+            hovered_tab: None,
             connection: ConnectionState::Disconnected,
             available_ports: Vec::new(),
             selected_port: None,
@@ -303,12 +318,13 @@ impl Application for NevcApp {
             fw_reconnect_after_flash: false,
             serial_handle: None,
             log: Vec::new(),
-            graph_channels: [false; NUM_CHANNELS],
+            log_content: iced::widget::text_editor::Content::with_text(""),
+            graph_channels: [true, true, false, false, false, false, true, true],
             graph_poll_hz: 5.0,
             graph_running: false,
             graph_history: std::collections::VecDeque::new(),
             graph_start_secs: 0.0,
-            graph_mode: GraphMode::Overlay,
+            graph_mode: GraphMode::Individual,
         };
 
         // Detect COM ports immediately on startup
@@ -321,7 +337,20 @@ impl Application for NevcApp {
     }
 
     fn title(&self) -> String {
-        String::from("Nexperia Motor Driver GUI — NEVC-MTR1")
+        String::from("Nexperia Motor Driver GUI - NEVC-MTR1")
+    }
+
+    fn theme(&self) -> Theme {
+        Theme::Custom(std::sync::Arc::new(iced::theme::Custom::new(
+            "Nexperia".to_string(),
+            iced::theme::Palette {
+                background: iced::Color::WHITE,
+                text: iced::Color::BLACK,
+                primary: COLOR_ORANGE,
+                success: COLOR_CONNECTED,
+                danger: COLOR_DISCONNECTED,
+            },
+        )))
     }
 
     fn update(&mut self, message: Message) -> Command<Message> {
@@ -329,6 +358,11 @@ impl Application for NevcApp {
             // ---- Navigation ----
             Message::TabSelected(panel) => {
                 self.active_panel = panel;
+                Command::none()
+            }
+
+            Message::TabHovered(panel) => {
+                self.hovered_tab = panel;
                 Command::none()
             }
 
@@ -354,9 +388,9 @@ impl Application for NevcApp {
             }
 
             Message::PortSelected(name) => {
-                // The pick_list returns the display string; extract port name before " —"
+                // The pick_list returns the display string; extract port name before " -"
                 let port_name = name
-                    .split(" —")
+                    .split(" -")
                     .next()
                     .unwrap_or(&name)
                     .trim()
@@ -410,7 +444,7 @@ impl Application for NevcApp {
                         },
                     );
                 }
-                // Motor not running — disconnect immediately
+                // Motor not running - disconnect immediately
                 Command::perform(async {}, |_| Message::DoDisconnect)
             }
 
@@ -507,7 +541,7 @@ impl Application for NevcApp {
             Message::Connected(Ok(handle)) => {
                 self.connection = ConnectionState::Connected;
                 self.serial_handle = Some(handle.clone());
-                self.status_message = String::from("Connected — querying firmware version…");
+                self.status_message = String::from("Connected - querying firmware version...");
                 // Fire *IDN? query
                 Command::perform(
                     async move {
@@ -540,7 +574,7 @@ impl Application for NevcApp {
                 let msg = format!("Connected \u{2014} firmware v{}", idn.firmware_version);
                 self.status_message = msg.clone();
                 self.push_log(LogLevel::Info, format!(
-                    "IDN: {} {} — firmware v{}",
+                    "IDN: {} {} - firmware v{}",
                     idn.manufacturer, idn.model, idn.firmware_version
                 ));
                 // Poll the SCPI error queue so any startup errors are surfaced
@@ -670,7 +704,7 @@ impl Application for NevcApp {
             }
 
             Message::FrequencyChanged(freq) => {
-                // Ignore slider drag while motor is running — keeps UI in sync with board.
+                // Ignore slider drag while motor is running - keeps UI in sync with board.
                 if !self.motor_enabled {
                     self.motor_frequency = freq;
                     self.motor_frequency_input = format!("{:.0}", freq);
@@ -725,7 +759,7 @@ impl Application for NevcApp {
                     }
                     None => {
                         self.status_message = format!(
-                            "Invalid frequency — enter a value between {} and {} Hz.",
+                            "Invalid frequency - enter a value between {} and {} Hz.",
                             crate::scpi::FREQ_MIN_HZ,
                             crate::scpi::FREQ_MAX_HZ
                         );
@@ -751,7 +785,7 @@ impl Application for NevcApp {
                 };
                 self.push_log(
                     LogLevel::Info,
-                    format!("Direction → {} — cycling enable…", dir),
+                    format!("Direction -> {} - cycling enable...", dir),
                 );
                 Command::perform(
                     async move {
@@ -1147,7 +1181,7 @@ impl Application for NevcApp {
                                 self.push_log(LogLevel::Warn, "Could not parse IDN serial into config.".to_string());
                             }
                         } else {
-                            self.push_log(LogLevel::Warn, "No IDN serial available — connect to device first.".to_string());
+                            self.push_log(LogLevel::Warn, "No IDN serial available - connect to device first.".to_string());
                         }
                     }
                 }
@@ -1175,7 +1209,7 @@ impl Application for NevcApp {
                     }
                 }
                 let port = self.selected_port.clone().unwrap_or_else(|| String::from("COM1"));
-                // Disconnect serial before flashing — it conflicts with the 1200-baud reset
+                // Disconnect serial before flashing - it conflicts with the 1200-baud reset
                 self.fw_reconnect_after_flash = self.connection == ConnectionState::Connected;
                 if self.fw_reconnect_after_flash {
                     self.serial_handle = None;
@@ -1314,7 +1348,7 @@ impl Application for NevcApp {
                 self.refresh_flash_content();
                 let port = self.selected_port.clone().unwrap_or_else(|| "COM1".to_string());
 
-                // Pass the original application port — arduino-cli handles the
+                // Pass the original application port - arduino-cli handles the
                 // 1200-baud reset and bootloader port detection internally.
                 Command::perform(
                     async move {
@@ -1410,7 +1444,49 @@ impl Application for NevcApp {
 
             Message::ClearLog => {
                 self.log.clear();
+                self.refresh_log_content();
                 Command::none()
+            }
+
+            Message::LogAction(action) => {
+                use iced::widget::text_editor::Action;
+                if !matches!(action, Action::Edit(_)) {
+                    self.log_content.perform(action);
+                }
+                Command::none()
+            }
+
+            Message::DownloadLog => {
+                let text: String = self.log.iter().rev().map(|entry| {
+                    let prefix = match entry.level {
+                        LogLevel::Info  => "[INFO ]",
+                        LogLevel::Warn  => "[WARN ]",
+                        LogLevel::Error => "[ERROR]",
+                    };
+                    format!("{} {} {}", entry.timestamp, prefix, entry.message)
+                }).collect::<Vec<_>>().join("\n");
+                Command::perform(
+                    async move {
+                        let handle = rfd::AsyncFileDialog::new()
+                            .set_title("Save Event Log")
+                            .set_file_name("nevc_mtr1_log.txt")
+                            .add_filter("Text file", &["txt", "log"])
+                            .save_file()
+                            .await;
+                        let Some(handle) = handle else {
+                            return Err("cancelled".to_string());
+                        };
+                        tokio::fs::write(handle.path(), text.as_bytes())
+                            .await
+                            .map(|_| handle.path().to_string_lossy().into_owned())
+                            .map_err(|e| e.to_string())
+                    },
+                    |result| match result {
+                        Ok(path) => Message::StatusMessage(format!("Log saved: {}", path)),
+                        Err(e) if e == "cancelled" => Message::StatusMessage(String::from("Save cancelled.")),
+                        Err(e) => Message::StatusMessage(format!("Save failed: {}", e)),
+                    },
+                )
             }
         }
     }
@@ -1441,7 +1517,7 @@ impl Application for NevcApp {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        // Platform guard — show notice on non-Windows builds at runtime
+        // Platform guard - show notice on non-Windows builds at runtime
         #[cfg(not(target_os = "windows"))]
         {
             return container(
@@ -1469,6 +1545,22 @@ impl NevcApp {
         self.flash_log_content = iced::widget::text_editor::Content::with_text(&self.flash_log.join("\n"));
     }
 
+    pub fn refresh_log_content(&mut self) {
+        let text = if self.log.is_empty() {
+            String::new()
+        } else {
+            self.log.iter().rev().map(|entry| {
+                let prefix = match entry.level {
+                    LogLevel::Info  => "[INFO ]",
+                    LogLevel::Warn  => "[WARN ]",
+                    LogLevel::Error => "[ERROR]",
+                };
+                format!("{} {} {}", entry.timestamp, prefix, entry.message)
+            }).collect::<Vec<_>>().join("\n")
+        };
+        self.log_content = iced::widget::text_editor::Content::with_text(&text);
+    }
+
     pub fn push_log(&mut self, level: LogLevel, msg: impl Into<String>) {
         use std::time::{SystemTime, UNIX_EPOCH};
         let secs = SystemTime::now()
@@ -1491,6 +1583,7 @@ impl NevcApp {
             level,
             message,
         });
+        self.refresh_log_content();
     }
 }
 
@@ -1529,11 +1622,28 @@ impl NevcApp {
     }
 
     fn view_header(&self) -> Element<'_, Message> {
-        let connected_badge = match self.connection {
-            ConnectionState::Disconnected => text("● Disconnected").size(13),
-            ConnectionState::Connecting => text("○ Connecting…").size(13),
-            ConnectionState::Connected => text("● Connected").size(13),
+        let dot_color = match self.connection {
+            ConnectionState::Disconnected => COLOR_DISCONNECTED,
+            ConnectionState::Connecting => iced::Color::from_rgb8(0xAA, 0xAA, 0xAA),
+            ConnectionState::Connected => COLOR_CONNECTED,
         };
+        let badge_label = match self.connection {
+            ConnectionState::Disconnected => "Disconnected",
+            ConnectionState::Connecting => "Connecting...",
+            ConnectionState::Connected => "Connected",
+        };
+        let badge_text_color = match self.connection {
+            ConnectionState::Disconnected => iced::theme::Text::Color(COLOR_DISCONNECTED),
+            ConnectionState::Connecting => iced::theme::Text::Default,
+            ConnectionState::Connected => iced::theme::Text::Color(COLOR_CONNECTED),
+        };
+        let connected_badge = row![
+            container(iced::widget::Space::new(8, 8))
+                .style(iced::theme::Container::Custom(Box::new(crate::ui::style::Indicator(dot_color)))),
+            iced::widget::Space::with_width(5),
+            text(badge_label).size(13).style(badge_text_color),
+        ]
+        .align_items(iced::Alignment::Center);
 
         static LOGO_BYTES: &[u8] = include_bytes!("../assets/logo/nexperia_logo_light.svg");
         let logo = iced::widget::svg(
@@ -1546,18 +1656,22 @@ impl NevcApp {
             row![
                 logo,
                 iced::widget::Space::with_width(8),
-                text("Motor Evaluation Kit").size(14),
+                text("Motor Evaluation Kit").size(14)
+                    .font(iced::Font { weight: iced::font::Weight::Bold, ..iced::Font::DEFAULT })
+                    .style(iced::theme::Text::Color(COLOR_PETROL)),
                 iced::widget::Space::with_width(Length::Fill),
                 connected_badge,
                 iced::widget::Space::with_width(8),
-                text("MTR1 series").size(16),
+                text("MTR1 series").size(16)
+                    .font(iced::Font { weight: iced::font::Weight::Bold, ..iced::Font::DEFAULT })
+                    .style(iced::theme::Text::Color(COLOR_PETROL)),
             ]
             .spacing(4)
             .align_items(iced::Alignment::Center),
         )
         .width(Length::Fill)
         .padding([8, 12, 8, 12])
-        .style(iced::theme::Container::Box)
+        .style(iced::theme::Container::Custom(Box::new(crate::ui::style::WhiteBar)))
         .into()
     }
 
@@ -1574,24 +1688,52 @@ impl NevcApp {
             .iter()
             .map(|(panel, label)| {
                 let is_active = *panel == self.active_panel;
-                let style = if is_active {
-                    iced::theme::Button::Primary
+                let is_hovered = self.hovered_tab.as_ref() == Some(panel);
+                let is_highlighted = is_active || is_hovered;
+
+                let text_color = if is_highlighted {
+                    COLOR_PETROL
                 } else {
-                    iced::theme::Button::Secondary
+                    iced::Color::from_rgb8(0x88, 0x88, 0x88)
                 };
-                button(text(*label).size(14))
+
+                let indicator: Element<'_, Message> = if is_highlighted {
+                    container(iced::widget::Space::with_height(Length::Fixed(3.0)))
+                        .width(Length::Fill)
+                        .style(iced::theme::Container::Custom(Box::new(crate::ui::style::Indicator(COLOR_ORANGE))))
+                        .into()
+                } else {
+                    container(iced::widget::Space::with_height(Length::Fixed(3.0)))
+                        .width(Length::Fill)
+                        .into()
+                };
+
+                let tab_content = column![
+                    text(*label).size(14)
+                        .font(iced::Font { weight: iced::font::Weight::Bold, ..iced::Font::DEFAULT })
+                        .style(iced::theme::Text::Color(text_color)),
+                    iced::widget::Space::with_height(5),
+                    indicator,
+                ]
+                .width(Length::Fill)
+                .align_items(iced::Alignment::Center);
+
+                let btn = button(tab_content)
                     .on_press(Message::TabSelected(panel.clone()))
-                    .padding([6, 14])
-                    .style(style)
+                    .padding([8, 14, 0, 14])
+                    .style(iced::theme::Button::Custom(Box::new(crate::ui::style::TabButton)));
+
+                iced::widget::mouse_area(btn)
+                    .on_enter(Message::TabHovered(Some(panel.clone())))
+                    .on_exit(Message::TabHovered(None))
                     .into()
             })
             .collect();
 
-        container(
-            row(buttons).spacing(4),
-        )
-        .width(Length::Fill)
-        .padding([6, 12])
-        .into()
+        container(row(buttons).spacing(0))
+            .width(Length::Fill)
+            .padding([4, 8, 0, 8])
+            .style(iced::theme::Container::Custom(Box::new(crate::ui::style::GrayBar)))
+            .into()
     }
 }
