@@ -22,6 +22,12 @@ The GUI connects to an Arduino Leonardo running the
 The kit hardware is documented on the
 [Nexperia NEVB-MTR1-KIT1 product page](https://www.nexperia.com/applications/evaluation-boards/NEVB-MCTRL-100---1-kW--12-48-V-BLDC-motor-driver-kit).
 
+## Screenshots
+
+| Graphs | Firmware & Config |
+|--------|------------------|
+| ![Graphs tab](assets/screenshots/graphs.png) | ![Firmware & Config tab](assets/screenshots/config.png) |
+
 ---
 
 ## Using a pre-built release
