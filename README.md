@@ -32,14 +32,20 @@ The kit hardware is documented on the
 
 ## Using a pre-built release
 
-1. Download the latest `NEVC-MTR1-GUI.exe` from the [Releases](../../releases) page.
+> **Tested platform: Windows 10/11 x64.** Windows ARM64, Linux, and macOS builds are provided but untested - use at your own risk and report any issues.
+
+1. Download the archive for your platform from the [Releases](../../releases) page and extract it.
 2. Connect the Arduino Leonardo USB cable to your PC.
-3. Run `NEVC-MTR1-GUI.exe` - no installation required.
+3. Run `NEVC-MTR1-GUI.exe` (Windows) or `NEVC-MTR1-GUI` (Linux/macOS) - no installation required.
 4. Select the COM port in the **Connection** tab and click **Connect**.
 
 On first launch the app downloads `arduino-cli.exe` and the Arduino AVR core
 (~130 MB, one time only). These are stored in
 `%APPDATA%\nevc_mtr1_gui\tools\` and reused on subsequent runs.
+
+> **macOS:** The binary is unsigned. On first launch, right-click it and choose **Open** to bypass Gatekeeper.
+>
+> **Linux / macOS:** The firmware compile/upload tab requires `arduino-cli` to be installed manually - automatic download is Windows-only.
 
 ---
 
