@@ -70,7 +70,7 @@ pub struct FirmwareConfig {
 }
 
 impl Default for FirmwareConfig {
-    /// Repo defaults from main/config.h on branch dev/scpi-gui-compatible.
+    /// Repo defaults from main/config.h on the main branch.
     fn default() -> Self {
         Self {
             motor_poles: 8,
@@ -462,10 +462,10 @@ pub fn ensure_avr_core(cli: &Path, mut progress: impl FnMut(&str)) -> anyhow::Re
 // ---------------------------------------------------------------------------
 
 const FIRMWARE_REPO_ZIP_URL: &str =
-    "https://github.com/Nexperia/NEVC-MTR1-t01/archive/refs/heads/dev/scpi-gui-compatible.zip";
+    "https://github.com/Nexperia/NEVC-MTR1-t01/archive/refs/heads/main.zip";
 
 /// Expected top-level directory name inside the downloaded ZIP archive.
-const FIRMWARE_ZIP_ROOT: &str = "NEVC-MTR1-t01-dev-scpi-gui-compatible";
+const FIRMWARE_ZIP_ROOT: &str = "NEVC-MTR1-t01-main";
 
 /// Download and extract the firmware source if not already cached.
 /// Returns the path to the `main/` sketch directory.
