@@ -1,0 +1,82 @@
+name: Release
+
+# Trigger only on version tags (e.g. v1.0.0, v0.3.1-beta)
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  BINARY_NAME: NEVC-MTR1-GUI
+
+jobs:
+  build-windows:
+    name: Build Windows x64
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Cargo registry & build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build release binary
+        run: cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Package release archive
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}"
+          $archive = "${{ env.BINARY_NAME }}-${version}-windows-x64.zip"
+
+          # Gather files to bundle
+          Copy-Item "target\x86_64-pc-windows-msvc\release\${{ env.BINARY_NAME }}.exe" -Destination .
+          $files = @(
+            "${{ env.BINARY_NAME }}.exe",
+            "SAFETY.md",
+            "README.md",
+            "LICENSE"
+          )
+
+          # Only include files that actually exist
+          $existing = $files | Where-Object { Test-Path $_ }
+          Compress-Archive -Path $existing -DestinationPath $archive -Force
+
+          echo "ARCHIVE=$archive" >> $env:GITHUB_ENV
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "NEVC-MTR1 GUI ${{ github.ref_name }}"
+          body: |
+            ## NEVC-MTR1 Motor Evaluation Kit GUI ${{ github.ref_name }}
+
+            > **⚠ PREVIEW SOFTWARE — Read [SAFETY.md](SAFETY.md) before use.**
+
+            ### Installation
+            1. Download and extract the ZIP below.
+            2. Run `nevc_mtr1_gui.exe` — no installer required.
+            3. Connect your NEVC-MTR1 board via USB before launching.
+
+            ### Safety
+            This software is in **preview**. There may be bugs that could cause
+            unexpected motor behaviour. Always read **SAFETY.md** and ensure the
+            motor is securely clamped before operation.
+          files: ${{ env.ARCHIVE }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

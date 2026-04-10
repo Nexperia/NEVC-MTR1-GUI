@@ -1,12 +1,12 @@
 [package]
 name = "nevc_mtr1_gui"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "Nexperia Motor Driver GUI for NEVC-MTR1 (Arduino Leonardo, SCPI over USB-Serial)"
 authors = ["Nexperia"]
 
 [[bin]]
-name = "nevc_mtr1_gui"
+name = "NEVC-MTR1-GUI"
 path = "src/main.rs"
 
 [dependencies]

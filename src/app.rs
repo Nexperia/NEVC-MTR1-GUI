@@ -337,7 +337,7 @@ impl Application for NevcApp {
     }
 
     fn title(&self) -> String {
-        String::from("Nexperia Motor Driver GUI - NEVC-MTR1")
+        format!("Nexperia MTR1 Series GUI v{}", env!("CARGO_PKG_VERSION"))
     }
 
     fn theme(&self) -> Theme {
@@ -1656,8 +1656,11 @@ impl NevcApp {
             row![
                 logo,
                 iced::widget::Space::with_width(8),
-                text("Motor Evaluation Kit").size(14)
+                text("Motor Evaluation Kit (Preview)").size(14)
                     .font(iced::Font { weight: iced::font::Weight::Bold, ..iced::Font::DEFAULT })
+                    .style(iced::theme::Text::Color(COLOR_PETROL)),
+                iced::widget::Space::with_width(4),
+                text(concat!("v", env!("CARGO_PKG_VERSION"))).size(11)
                     .style(iced::theme::Text::Color(COLOR_PETROL)),
                 iced::widget::Space::with_width(Length::Fill),
                 connected_badge,
