@@ -116,6 +116,9 @@ pub struct NevcApp {
     pub idn_manufacturer: Option<String>,
     pub idn_model: Option<String>,
     pub idn_serial: Option<String>,
+    /// Remote debug mode as reported by the connected device's IDN serial field.
+    /// When Some(true) the SCPI protocol is unreliable and motor/graphs tabs are blocked.
+    pub device_remote_debug_mode: Option<bool>,
 
     // Motor control state (write-side)
     pub motor_enabled: bool,
@@ -148,6 +151,7 @@ pub struct NevcApp {
     pub firmware_config: crate::firmware::FirmwareConfig,
     pub firmware_config_source: FwConfigSource,
     pub fw_param_inputs: Vec<String>,
+    pub fw_param_errors: Vec<Option<String>>,
     pub flash_log_content: iced::widget::text_editor::Content,
     pub fw_reconnect_after_flash: bool,
 
@@ -296,6 +300,7 @@ impl Application for NevcApp {
             idn_manufacturer: None,
             idn_model: None,
             idn_serial: None,
+            device_remote_debug_mode: None,
             motor_enabled: false,
             motor_frequency: 20_000.0,
             motor_frequency_input: String::from("20000"),
@@ -314,6 +319,7 @@ impl Application for NevcApp {
             firmware_config: crate::firmware::FirmwareConfig::default(),
             firmware_config_source: FwConfigSource::Repo,
             fw_param_inputs: crate::firmware::FirmwareConfig::default().to_input_strings(),
+            fw_param_errors: vec![None; crate::ui::firmware::PARAMS.len()],
             flash_log_content: iced::widget::text_editor::Content::with_text(""),
             fw_reconnect_after_flash: false,
             serial_handle: None,
@@ -375,14 +381,18 @@ impl Application for NevcApp {
             Message::PortsRefreshed(ports) => {
                 let prev = self.selected_port.clone();
                 self.available_ports = ports;
-                // Keep previous selection if it still exists, otherwise pick first
+                // Keep previous selection if it still exists
                 let still_valid = prev
                     .as_ref()
                     .map(|n| self.available_ports.iter().any(|p| &p.name == n))
                     .unwrap_or(false);
                 if !still_valid {
-                    self.selected_port =
-                        self.available_ports.first().map(|p| p.name.clone());
+                    // Prefer an Arduino Leonardo; fall back to first port
+                    self.selected_port = self.available_ports
+                        .iter()
+                        .find(|p| p.is_arduino)
+                        .or_else(|| self.available_ports.first())
+                        .map(|p| p.name.clone());
                 }
                 Command::none()
             }
@@ -456,6 +466,7 @@ impl Application for NevcApp {
                 self.idn_manufacturer = None;
                 self.idn_model = None;
                 self.idn_serial = None;
+                self.device_remote_debug_mode = None;
                 self.motor_enabled = false;
                 self.motor_busy = false;
                 self.graph_running = false;
@@ -571,6 +582,8 @@ impl Application for NevcApp {
                 self.idn_manufacturer = Some(idn.manufacturer.clone());
                 self.idn_model = Some(idn.model.clone());
                 self.idn_serial = Some(idn.serial.clone());
+                self.device_remote_debug_mode = crate::firmware::FirmwareConfig::from_idn_serial(&idn.serial)
+                    .map(|cfg| cfg.remote_debug_mode);
                 let msg = format!("Connected \u{2014} firmware v{}", idn.firmware_version);
                 self.status_message = msg.clone();
                 self.push_log(LogLevel::Info, format!(
@@ -792,39 +805,42 @@ impl Application for NevcApp {
                         tokio::task::spawn_blocking(move || {
                             use std::time::Duration;
 
-                            // 1. Send direction command
-                            crate::serial::scpi_send(&handle, dir_cmd)?;
-
-                            // 2. Poll speed until motor stops (max ~1.5 s)
-                            for _ in 0..10 {
-                                std::thread::sleep(Duration::from_millis(150));
-                                if let Ok(resp) = crate::serial::scpi_query(
+                            // 1. Disable motor first (before changing direction) so the
+                            //    firmware applies the new direction from a clean stopped state.
+                            if was_enabled {
+                                crate::serial::scpi_send(
                                     &handle,
-                                    crate::scpi::commands::MEAS_SPEED,
-                                ) {
-                                    let speed: f32 = resp.trim().parse().unwrap_or(999.0);
-                                    if speed.abs() < 10.0 {
-                                        break;
+                                    crate::scpi::commands::CONF_ENABLE_OFF,
+                                )?;
+                                // Wait until the motor has actually stopped (max ~2.5 s)
+                                for _ in 0..17 {
+                                    std::thread::sleep(Duration::from_millis(150));
+                                    if let Ok(resp) = crate::serial::scpi_query(
+                                        &handle,
+                                        crate::scpi::commands::MEAS_SPEED,
+                                    ) {
+                                        let speed: f32 = resp.trim().parse().unwrap_or(999.0);
+                                        if speed.abs() < 10.0 {
+                                            break;
+                                        }
                                     }
                                 }
                             }
 
-                            // 3. Ensure enable is off
-                            crate::serial::scpi_send(
-                                &handle,
-                                crate::scpi::commands::CONF_ENABLE_OFF,
-                            )?;
+                            // 2. Now set the direction (motor is stopped)
+                            crate::serial::scpi_send(&handle, dir_cmd)?;
+                            // Brief settle time for firmware to latch the new direction
+                            std::thread::sleep(Duration::from_millis(80));
 
-                            // 4. If motor was running, turn it back on
+                            // 3. If motor was running, turn it back on
                             if was_enabled {
-                                std::thread::sleep(Duration::from_millis(100));
                                 crate::serial::scpi_send(
                                     &handle,
                                     crate::scpi::commands::CONF_ENABLE_ON,
                                 )?;
                             }
 
-                            // 5. Confirm direction (now settled)
+                            // 4. Confirm direction from board
                             let resp = crate::serial::scpi_query(
                                 &handle,
                                 crate::scpi::commands::CONF_DIR_QUERY,
@@ -1046,6 +1062,7 @@ impl Application for NevcApp {
                 self.idn_manufacturer = None;
                 self.idn_model = None;
                 self.idn_serial = None;
+                self.device_remote_debug_mode = None;
                 self.motor_enabled = false;
                 self.motor_busy = false;
                 self.graph_running = false;
@@ -1185,6 +1202,7 @@ impl Application for NevcApp {
                         }
                     }
                 }
+                for e in &mut self.fw_param_errors { *e = None; }
                 Command::none()
             }
 
@@ -1194,6 +1212,14 @@ impl Application for NevcApp {
                 if let Some(slot) = self.fw_param_inputs.get_mut(idx) {
                     *slot = value;
                 }
+                // Live validation: run validate_inputs_all to update per-field errors simultaneously
+                let errs = crate::firmware::FirmwareConfig::validate_inputs_all(&self.fw_param_inputs);
+                for e in &mut self.fw_param_errors { *e = None; }
+                for (err_idx, msg) in errs {
+                    if let Some(slot) = self.fw_param_errors.get_mut(err_idx) {
+                        *slot = Some(msg);
+                    }
+                }
                 Command::none()
             }
 
@@ -1201,7 +1227,10 @@ impl Application for NevcApp {
                 // Parse all inputs into a config struct
                 match crate::firmware::FirmwareConfig::try_from_inputs(&self.fw_param_inputs) {
                     Err((idx, msg)) => {
-                        self.flash_status = FlashStatus::Failed(format!("Parameter {}: {}", idx, msg));
+                        let param_name = crate::ui::firmware::PARAMS.get(idx)
+                            .map(|p| p.label)
+                            .unwrap_or("Unknown parameter");
+                        self.flash_status = FlashStatus::Failed(format!("{}: {}", param_name, msg));
                         return Command::none();
                     }
                     Ok(config) => {
@@ -1217,7 +1246,12 @@ impl Application for NevcApp {
                 }
                 self.flash_log.clear();
                 self.flash_log_content = iced::widget::text_editor::Content::with_text("");
-                self.flash_status = FlashStatus::Busy("Checking for Arduino CLI…".to_string());
+                let initial_status = if crate::firmware::is_arduino_cli_ready() {
+                    "Checking for Arduino CLI…".to_string()
+                } else {
+                    "First-time setup: downloading Arduino CLI and AVR toolchain (may take several minutes)…".to_string()
+                };
+                self.flash_status = FlashStatus::Busy(initial_status);
                 self.flash_log.push(format!("[Flash] Starting… port={}", port));
                 self.refresh_flash_content();
                 Command::perform(
@@ -1312,6 +1346,16 @@ impl Application for NevcApp {
                             std::fs::write(&config_h, patched.as_bytes())
                                 .map_err(|e| format!("Cannot write config.h: {}", e))?;
                             p("config.h updated.");
+
+                            // Patch scpi.cpp (fix double bit-shift cast error)
+                            let scpi_cpp = src_dir.join("scpi.cpp");
+                            if scpi_cpp.exists() {
+                                let src = std::fs::read_to_string(&scpi_cpp)
+                                    .map_err(|e| format!("Cannot read scpi.cpp: {}", e))?;
+                                let src_patched = crate::firmware::patch_scpi_cpp(&src);
+                                std::fs::write(&scpi_cpp, src_patched.as_bytes())
+                                    .map_err(|e| format!("Cannot write scpi.cpp: {}", e))?;
+                            }
 
                             // Compile
                             crate::firmware::compile_sketch(&cli, &src_dir, &mut p)
