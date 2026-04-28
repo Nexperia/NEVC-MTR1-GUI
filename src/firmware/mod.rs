@@ -264,6 +264,15 @@ impl FirmwareConfig {
                 (idx, format!("'{}' is not a valid unsigned integer", inputs[idx]))
             })
         };
+        let pu_range = |idx: usize, lo: u32, hi: u32| -> Result<u32, (usize, String)> {
+            let v = inputs[idx].trim().parse::<u32>().map_err(|_| {
+                (idx, format!("'{}' is not a valid unsigned integer", inputs[idx]))
+            })?;
+            if v < lo || v > hi {
+                return Err((idx, format!("{} is out of the valid range ({}\u{2013}{})", v, lo, hi)));
+            }
+            Ok(v)
+        };
         let ps = |idx: usize| -> Result<i32, (usize, String)> {
             let s = inputs[idx].trim();
             let v = s.parse::<i32>()
@@ -315,12 +324,18 @@ impl FirmwareConfig {
         };
 
         Ok(Self {
-            motor_poles:               pu(0)?,
-            f_mosfet:                  pu(1)?,
-            dead_time:                 pu(2)?,
+            motor_poles: {
+                let v = pu_range(0, 2, 256)?;
+                if v % 2 != 0 {
+                    return Err((0, format!("{} is not a valid pole count — must be an even number", v)));
+                }
+                v
+            },
+            f_mosfet:                  pu_range(1, 7183, 100_000)?,
+            dead_time:                 pu_range(2, 350, 1875)?,
             emulate_hall:              pb(3)?,
-            tim3_freq:                 pu(4)?,
-            commutation_ticks_stopped: pu(5)?,
+            tim3_freq:                 pu_range(4, 1, 1000)?,
+            commutation_ticks_stopped: pu_range(5, 1, 65535)?,
             turn_off_mode:             pu(6)?,
             iphase_gain:               pu(7)?,
             iphase_sense_resistor:     pu(8)?,
@@ -329,10 +344,10 @@ impl FirmwareConfig {
             ibus_warning_threshold:    pa_to_adc(11)?,
             ibus_error_threshold:      pa_to_adc(12)?,
             ibus_fault_enable:         pb(13)?,
-            speed_control_method:      pu(14)?,
-            speed_controller_time_base: pu(15)?,
-            speed_controller_max_delta: pu(16)?,
-            speed_controller_max_speed: pu(17)?,
+            speed_control_method:      pu_range(14, 0, 1)?,
+            speed_controller_time_base: pu_range(15, 1, 255)?,
+            speed_controller_max_delta: pu_range(16, 1, 65535)?,
+            speed_controller_max_speed: pu_range(17, 1, 65535)?,
             pid_k_p:                   ps(18)?,
             pid_k_i:                   ps(19)?,
             pid_k_d_enable:            pb(20)?,

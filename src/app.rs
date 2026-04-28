@@ -116,6 +116,9 @@ pub struct NevcApp {
     pub idn_manufacturer: Option<String>,
     pub idn_model: Option<String>,
     pub idn_serial: Option<String>,
+    /// Remote debug mode as reported by the connected device's IDN serial field.
+    /// When Some(true) the SCPI protocol is unreliable and motor/graphs tabs are blocked.
+    pub device_remote_debug_mode: Option<bool>,
 
     // Motor control state (write-side)
     pub motor_enabled: bool,
@@ -296,6 +299,7 @@ impl Application for NevcApp {
             idn_manufacturer: None,
             idn_model: None,
             idn_serial: None,
+            device_remote_debug_mode: None,
             motor_enabled: false,
             motor_frequency: 20_000.0,
             motor_frequency_input: String::from("20000"),
@@ -460,6 +464,7 @@ impl Application for NevcApp {
                 self.idn_manufacturer = None;
                 self.idn_model = None;
                 self.idn_serial = None;
+                self.device_remote_debug_mode = None;
                 self.motor_enabled = false;
                 self.motor_busy = false;
                 self.graph_running = false;
@@ -575,6 +580,8 @@ impl Application for NevcApp {
                 self.idn_manufacturer = Some(idn.manufacturer.clone());
                 self.idn_model = Some(idn.model.clone());
                 self.idn_serial = Some(idn.serial.clone());
+                self.device_remote_debug_mode = crate::firmware::FirmwareConfig::from_idn_serial(&idn.serial)
+                    .map(|cfg| cfg.remote_debug_mode);
                 let msg = format!("Connected \u{2014} firmware v{}", idn.firmware_version);
                 self.status_message = msg.clone();
                 self.push_log(LogLevel::Info, format!(
@@ -1053,6 +1060,7 @@ impl Application for NevcApp {
                 self.idn_manufacturer = None;
                 self.idn_model = None;
                 self.idn_serial = None;
+                self.device_remote_debug_mode = None;
                 self.motor_enabled = false;
                 self.motor_busy = false;
                 self.graph_running = false;

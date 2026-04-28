@@ -2,7 +2,7 @@
 // Firmware & Configuration panel (combined Stage 5 + 6 tab)
 // ---------------------------------------------------------------------------
 
-use iced::widget::{button, column, container, row, scrollable, text, text_input};
+use iced::widget::{button, column, container, row, scrollable, text, text_input, tooltip};
 use iced::{Element, Length};
 
 /// Segoe UI Symbol ships on all Windows versions and covers the ⚠ glyph
@@ -42,41 +42,41 @@ pub struct ParamMeta {
 /// All 26 parameter descriptors, in IDN serial index order.
 pub const PARAMS: &[ParamMeta] = &[
     // --- Motor ---
-    ParamMeta { label: "Motor Poles",            unit: "",    help: "Number of poles in the motor (42BLS40-24-01 has 8)",           kind: ParamKind::UInt },
-    ParamMeta { label: "Switching Freq",         unit: "Hz",  help: "Gate switching frequency (7183-100000 Hz)",                   kind: ParamKind::UInt },
-    ParamMeta { label: "Dead Time",              unit: "ns",  help: "Dead time between switching actions (350-1875 ns)",           kind: ParamKind::UInt },
-    ParamMeta { label: "Emulate Hall",           unit: "",    help: "Generate hall sensor output signals (do not connect real sensors)", kind: ParamKind::Bool },
-    ParamMeta { label: "Emulated Motor Freq",    unit: "Hz",  help: "Electrical rotational frequency for emulated motor (if enabled)", kind: ParamKind::UInt },
-    ParamMeta { label: "Stopped Threshold",      unit: "ticks",help: "Hall ticks without change before motor is considered stopped", kind: ParamKind::UInt },
-    ParamMeta { label: "Turn-Off Mode",          unit: "",    help: "How to turn off the motor: COAST (free-wheel) or RAMP",       kind: ParamKind::TurnOffMode },
+    ParamMeta { label: "Motor Poles",            unit: "",    help: "Number of poles in the motor (42BLS40-24-01 has 8). Must be a positive even number.",  kind: ParamKind::UInt },
+    ParamMeta { label: "Switching Freq",         unit: "Hz",  help: "Gate switching frequency. Valid range: 7183\u{2013}100000 Hz.",                           kind: ParamKind::UInt },
+    ParamMeta { label: "Dead Time",              unit: "ns",  help: "Dead time inserted between complementary gate signals to prevent shoot-through. Valid range: 350\u{2013}1875 ns.", kind: ParamKind::UInt },
+    ParamMeta { label: "Emulate Hall",           unit: "",    help: "Generate hall sensor output signals for testing gate outputs without a real motor. Debug use only \u{2014} do not connect a real motor with hall sensors simultaneously.", kind: ParamKind::Bool },
+    ParamMeta { label: "Emulated Motor Freq",    unit: "Hz",  help: "Electrical rotation frequency used when Emulate Hall is enabled. Valid range: 1\u{2013}1000 Hz. Only active when Emulate Hall is TRUE.", kind: ParamKind::UInt },
+    ParamMeta { label: "Stopped Threshold",      unit: "ticks",help: "Number of PWM ticks without a hall edge before the motor is declared stopped. Must be > 0.", kind: ParamKind::UInt },
+    ParamMeta { label: "Turn-Off Mode",          unit: "",    help: "How phases are deactivated when the motor is stopped: COAST lets the motor free-wheel; RAMP applies a controlled deceleration.", kind: ParamKind::TurnOffMode },
     // --- Phase Current ---
-    ParamMeta { label: "Phase Current Gain",     unit: "",    help: "In-line phase current sense amplifier gain (NEVB-MTR1-I56-1: 20)", kind: ParamKind::UInt },
-    ParamMeta { label: "Phase Sense Resistor",   unit: "uOhm",help: "Phase current sense resistor value in micro-ohms (NEVB: 2500)", kind: ParamKind::UInt },
+    ParamMeta { label: "Phase Current Gain",     unit: "",    help: "Amplifier gain of the in-line phase current sense circuit (NEVB-MTR1-I56-1 default: 20).", kind: ParamKind::UInt },
+    ParamMeta { label: "Phase Sense Resistor",   unit: "\u{b5}Ohm",help: "Phase current sense shunt resistor value in micro-ohms (NEVB-MTR1-I56-1 default: 2500 \u{b5}\u{3a9}).", kind: ParamKind::UInt },
     // --- Bus Current ---
-    ParamMeta { label: "Bus Current Gain",       unit: "",    help: "Hi-side bus current sense amplifier gain (NEVB: 50 or 20)",   kind: ParamKind::UInt },
-    ParamMeta { label: "Bus Sense Resistor",     unit: "uOhm",help: "Bus current sense resistor value in micro-ohms (NEVB: 4000)", kind: ParamKind::UInt },
-    ParamMeta { label: "Bus Warn Threshold",     unit: "A",   help: "Bus current warning threshold",                               kind: ParamKind::Float },
-    ParamMeta { label: "Bus Error Threshold",    unit: "A",   help: "Bus current error threshold",                                kind: ParamKind::Float },
-    ParamMeta { label: "Bus Fault Enable",       unit: "",    help: "Disable all PWM when bus current error threshold exceeded",   kind: ParamKind::Bool },
+    ParamMeta { label: "Bus Current Gain",       unit: "",    help: "Amplifier gain of the hi-side bus current sense circuit (NEVB-MTR1-C-1 default: 50).",   kind: ParamKind::UInt },
+    ParamMeta { label: "Bus Sense Resistor",     unit: "\u{b5}Ohm",help: "Bus current sense shunt resistor value in micro-ohms (NEVB-MTR1-C-1 default: 4000 \u{b5}\u{3a9}).", kind: ParamKind::UInt },
+    ParamMeta { label: "Bus Warn Threshold",     unit: "A",   help: "Bus current level at which a warning is flagged. Enter the physical current in amperes; the ADC equivalent is shown below.", kind: ParamKind::Float },
+    ParamMeta { label: "Bus Error Threshold",    unit: "A",   help: "Bus current level at which an error is triggered (and PWM disabled if Bus Fault Enable is TRUE). Enter in amperes; ADC equivalent shown below.", kind: ParamKind::Float },
+    ParamMeta { label: "Bus Fault Enable",       unit: "",    help: "When TRUE, all PWM outputs are disabled immediately when bus current exceeds the error threshold.", kind: ParamKind::Bool },
     // --- Speed Control ---
-    ParamMeta { label: "Speed Control Method",   unit: "",    help: "Speed control: OPEN LOOP (duty cycle) or CLOSED LOOP (PID)", kind: ParamKind::SpeedControlMethod },
-    ParamMeta { label: "Speed Loop Time Base",   unit: "ticks",help: "PWM ticks between each speed-loop iteration (1-255)",       kind: ParamKind::UInt },
-    ParamMeta { label: "Max Speed Delta",        unit: "",    help: "Maximum speed reference change per loop iteration (open loop)", kind: ParamKind::UInt },
-    ParamMeta { label: "Max Speed",              unit: "hall Hz",help: "Maximum motor speed setpoint for closed-loop control",    kind: ParamKind::UInt },
+    ParamMeta { label: "Speed Control Method",   unit: "",    help: "OPEN LOOP: speed set by duty cycle directly. CLOSED LOOP: speed regulated by PID controller using hall sensor feedback.", kind: ParamKind::SpeedControlMethod },
+    ParamMeta { label: "Speed Loop Time Base",   unit: "ticks",help: "Number of PWM ticks between each speed-loop iteration. Valid range: 1\u{2013}255 ticks.", kind: ParamKind::UInt },
+    ParamMeta { label: "Max Speed Delta",        unit: "",    help: "Maximum change in speed reference per loop iteration, used for open-loop ramping. Must be > 0.", kind: ParamKind::UInt },
+    ParamMeta { label: "Max Speed",              unit: "hall Hz",help: "Maximum motor speed setpoint for closed-loop control, measured in hall edge frequency. Must be > 0.", kind: ParamKind::UInt },
     // --- PID ---
-    ParamMeta { label: "PID Kp",                 unit: "",    help: "PID proportional gain constant (closed-loop only, i16)",     kind: ParamKind::SInt },
-    ParamMeta { label: "PID Ki",                 unit: "",    help: "PID integral gain constant (closed-loop only, i16)",         kind: ParamKind::SInt },
-    ParamMeta { label: "PID Kd Enable",          unit: "",    help: "Enable the derivative term in the PID controller",           kind: ParamKind::Bool },
-    ParamMeta { label: "PID Kd",                 unit: "",    help: "PID derivative gain constant (closed-loop only, i16)",       kind: ParamKind::SInt },
-    ParamMeta { label: "PID Max I Term",         unit: "",    help: "PID integrator anti-windup limit (closed-loop only)",         kind: ParamKind::UInt },
-    ParamMeta { label: "PID Output Max",         unit: "",    help: "PID output ceiling - max speed reference output (closed-loop)", kind: ParamKind::UInt },
+    ParamMeta { label: "PID Kp",                 unit: "",    help: "PID proportional gain (16-bit signed integer). Active in closed-loop mode only. Range: -32768\u{2013}32767.", kind: ParamKind::SInt },
+    ParamMeta { label: "PID Ki",                 unit: "",    help: "PID integral gain (16-bit signed integer). Active in closed-loop mode only. Range: -32768\u{2013}32767.", kind: ParamKind::SInt },
+    ParamMeta { label: "PID Kd Enable",          unit: "",    help: "Enable the derivative term in the PID controller. Only active in closed-loop mode.",     kind: ParamKind::Bool },
+    ParamMeta { label: "PID Kd",                 unit: "",    help: "PID derivative gain (16-bit signed integer). Active in closed-loop mode only. Range: -32768\u{2013}32767.", kind: ParamKind::SInt },
+    ParamMeta { label: "PID Max I Term",         unit: "",    help: "Anti-windup clamp on the PID integrator. Limits the maximum absolute value of the integral accumulator. Active in closed-loop mode only.", kind: ParamKind::UInt },
+    ParamMeta { label: "PID Output Max",         unit: "",    help: "Ceiling on the PID controller output, capping the maximum speed reference it can produce. Active in closed-loop mode only.", kind: ParamKind::UInt },
     // --- VBUS Sense ---
-    ParamMeta { label: "VBUS Top Resistor",      unit: "Ohm", help: "Top resistor of the VBUS potential divider (NEVB-MTR1-C-1: 100 kOhm)", kind: ParamKind::UInt },
-    ParamMeta { label: "VBUS Bottom Resistor",   unit: "Ohm", help: "Bottom resistor of the VBUS potential divider (NEVB: 6.2 kOhm)", kind: ParamKind::UInt },
-    ParamMeta { label: "VBUS Min Threshold",     unit: "V",   help: "Minimum VBUS voltage required for motor operation",              kind: ParamKind::Float },
+    ParamMeta { label: "VBUS Top Resistor",      unit: "Ohm", help: "Top (high-side) resistor of the VBUS voltage divider (NEVB-MTR1-C-1 default: 100\u{202f}000 \u{3a9}).", kind: ParamKind::UInt },
+    ParamMeta { label: "VBUS Bottom Resistor",   unit: "Ohm", help: "Bottom (low-side) resistor of the VBUS voltage divider (NEVB-MTR1-C-1 default: 6\u{202f}200 \u{3a9}).", kind: ParamKind::UInt },
+    ParamMeta { label: "VBUS Min Threshold",     unit: "V",   help: "Minimum bus voltage required before the motor can be enabled. Enter in volts; ADC equivalent shown below.", kind: ParamKind::Float },
     // --- System ---
-    ParamMeta { label: "Wait for Board",         unit: "",    help: "Wait for the inverter board to be detected before enabling motor", kind: ParamKind::Bool },
-    ParamMeta { label: "Remote Debug Mode",      unit: "",    help: "Send errors to serial immediately without waiting for query", kind: ParamKind::Bool },
+    ParamMeta { label: "Wait for Board",         unit: "",    help: "When TRUE, the firmware waits for the NEVB-MTR1-C-1 inverter board to assert its ready signal before enabling the motor.", kind: ParamKind::Bool },
+    ParamMeta { label: "Remote Debug Mode",      unit: "",    help: "When TRUE, SCPI errors are pushed to the serial port immediately without waiting for a query. This breaks the SCPI request/response protocol \u{2014} do not use with this GUI.", kind: ParamKind::Bool },
 ];
 
 pub const GROUP_LABELS: &[(&str, std::ops::Range<usize>)] = &[
@@ -140,6 +140,10 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
         .get(14)
         .map(|v| v == "1" || v.to_uppercase().contains("CLOSED"))
         .unwrap_or(false);
+    let emulate_hall_on = app.fw_param_inputs
+        .get(3)
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(false);
 
     let mut param_groups: Vec<Element<Message>> = Vec::new();
 
@@ -164,7 +168,8 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
         for idx in range.clone() {
             let meta = &PARAMS[idx];
             let input_val = app.fw_param_inputs.get(idx).map(|s| s.as_str()).unwrap_or("");
-            let param_dimmed = group_dimmed;
+            // idx 4 (Emulated Motor Freq) only active when Emulate Hall is TRUE
+            let param_dimmed = group_dimmed || (idx == 4 && !emulate_hall_on);
 
             let dim_color = iced::Color::from_rgb(0.6, 0.6, 0.6);
             let label_text = if param_dimmed {
@@ -242,18 +247,22 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
                 }
             };
 
-            let help_text: Element<Message> = if param_dimmed {
-                text(meta.help).size(11).style(iced::theme::Text::Color(iced::Color::from_rgb(0.6, 0.6, 0.6))).into()
-            } else {
-                text(meta.help).size(11).into()
-            };
+            // Wrap input in a hover tooltip showing the help text
+            let tooltip_content = container(text(meta.help).size(11))
+                .padding([6, 10])
+                .max_width(340)
+                .style(iced::theme::Container::Box);
+            let input_with_tip: Element<Message> = tooltip(
+                input_widget,
+                tooltip_content,
+                tooltip::Position::Right,
+            )
+            .into();
 
             let param_row = row![
                 container(label_text)
                     .width(220),
-                input_widget,
-                iced::widget::Space::with_width(12),
-                help_text,
+                input_with_tip,
             ]
             .spacing(6)
             .align_items(iced::Alignment::Center);

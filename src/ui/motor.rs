@@ -17,6 +17,11 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
         }
     }
 
+    // Block if remote debug mode is enabled (breaks SCPI protocol)
+    if app.device_remote_debug_mode == Some(true) {
+        return remote_debug_mode_view();
+    }
+
     // -----------------------------------------------------------------------
     // Enable / Disable
     // -----------------------------------------------------------------------
@@ -187,6 +192,20 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+}
+
+fn remote_debug_mode_view<'a>() -> Element<'a, Message> {
+    column![
+        iced::widget::Space::with_height(20),
+        text("Remote Debug Mode is enabled").size(18),
+        iced::widget::Space::with_height(8),
+        text("The connected firmware has Remote Debug Mode enabled.").size(13),
+        text("This breaks the SCPI request/response protocol, making motor control unreliable.").size(13),
+        iced::widget::Space::with_height(8),
+        text("Disable Remote Debug Mode in the Firmware & Config tab and re-flash.").size(13),
+    ]
+    .spacing(4)
+    .into()
 }
 
 fn not_connected_view<'a>() -> Element<'a, Message> {
