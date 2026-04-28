@@ -546,7 +546,9 @@ fn build_single<'a>(app: &'a NevcApp, ch: usize, ranges: &[(f32, f32); 5]) -> El
     let g = GRAPH_CHANNEL_UNIT_GROUP[ch];
     let (ymin, ymax) = {
         let (mn, mx) = ranges[g];
-        if mn.is_finite() && mx.is_finite() && (mx - mn).abs() > 1e-9 { (mn, mx) } else { (0.0, 1.0) }
+        // Pass the actual value through even when flat (mn==mx);
+        // SingleChannelCanvas handles flat lines with a ±0.5 band.
+        if mn.is_finite() && mx.is_finite() { (mn, mx) } else { (0.0, 1.0) }
     };
     let canvas_el: Element<'_, Message> = Canvas::new(SingleChannelCanvas {
         history: &app.graph_history,

@@ -100,29 +100,31 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
     let can_load_device = app.connection == ConnectionState::Connected
         && app.idn_serial.is_some();
 
+    let github_active = app.firmware_config_source == FwConfigSource::Repo;
+    let device_active = app.firmware_config_source == FwConfigSource::Device;
+
     let load_github_btn = button(text("Load Defaults from GitHub").size(13))
-        .style(iced::theme::Button::Secondary)
+        .style(if github_active {
+            iced::theme::Button::Custom(Box::new(crate::ui::style::FilledButton))
+        } else {
+            iced::theme::Button::Secondary
+        })
         .on_press(Message::FwSourceChanged(FwConfigSource::Repo))
         .padding([6, 14]);
 
     let load_device_btn = {
         let b = button(text("Load Defaults from Device").size(13))
-            .style(iced::theme::Button::Secondary)
+            .style(if device_active {
+                iced::theme::Button::Custom(Box::new(crate::ui::style::FilledButton))
+            } else {
+                iced::theme::Button::Secondary
+            })
             .padding([6, 14]);
         if can_load_device {
             b.on_press(Message::FwSourceChanged(FwConfigSource::Device))
         } else {
             b
         }
-    };
-
-    let source_hint = match app.firmware_config_source {
-        FwConfigSource::Device if can_load_device =>
-            text("Values loaded from connected device IDN serial field.").size(12),
-        FwConfigSource::Device =>
-            text("Device not connected - connect and query IDN to load device values.").size(12),
-        FwConfigSource::Repo =>
-            text("Values loaded from repo defaults (main/config.h).").size(12),
     };
 
     let source_row = row![
@@ -359,6 +361,31 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
                 }
             }
 
+            // COAST turn-off mode warning (idx 6)
+            if idx == 6 {
+                let is_coast = input_val == "0" || input_val.to_uppercase().contains("COAST");
+                if is_coast {
+                    let warn_color = iced::Color::from_rgb(0.55, 0.35, 0.0);
+                    rows.push(
+                        container(
+                            row![
+                                text("⚠").size(11).font(SYM_FONT)
+                                    .style(iced::theme::Text::Color(warn_color)),
+                                text("  COAST mode leaves phases floating when the motor stops. Back-EMF can charge
+   bootstrap capacitors and cause unexpected gate behaviour. Use RAMP mode
+   unless you have a specific reason to use COAST.").size(11)
+                                    .style(iced::theme::Text::Color(warn_color)),
+                            ]
+                            .align_items(iced::Alignment::Start)
+                        )
+                        .padding([5, 12])
+                        .style(iced::theme::Container::Box)
+                        .into()
+                    );
+                    rows.push(iced::widget::Space::with_height(4).into());
+                }
+            }
+
             // Emulate Hall safety warning (idx 3)
             if idx == 3 {
                 let is_on = input_val == "true";
@@ -481,7 +508,6 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
     // -----------------------------------------------------------------------
     let mut content_children: Vec<Element<Message>> = vec![
         source_row.into(),
-        source_hint.into(),
         iced::widget::Space::with_height(16).into(),
         text("Configuration Parameters").size(18).into(),
         iced::widget::Space::with_height(8).into(),
