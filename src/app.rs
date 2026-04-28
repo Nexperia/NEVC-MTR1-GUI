@@ -375,14 +375,18 @@ impl Application for NevcApp {
             Message::PortsRefreshed(ports) => {
                 let prev = self.selected_port.clone();
                 self.available_ports = ports;
-                // Keep previous selection if it still exists, otherwise pick first
+                // Keep previous selection if it still exists
                 let still_valid = prev
                     .as_ref()
                     .map(|n| self.available_ports.iter().any(|p| &p.name == n))
                     .unwrap_or(false);
                 if !still_valid {
-                    self.selected_port =
-                        self.available_ports.first().map(|p| p.name.clone());
+                    // Prefer an Arduino Leonardo; fall back to first port
+                    self.selected_port = self.available_ports
+                        .iter()
+                        .find(|p| p.is_arduino)
+                        .or_else(|| self.available_ports.first())
+                        .map(|p| p.name.clone());
                 }
                 Command::none()
             }
@@ -792,39 +796,42 @@ impl Application for NevcApp {
                         tokio::task::spawn_blocking(move || {
                             use std::time::Duration;
 
-                            // 1. Send direction command
-                            crate::serial::scpi_send(&handle, dir_cmd)?;
-
-                            // 2. Poll speed until motor stops (max ~1.5 s)
-                            for _ in 0..10 {
-                                std::thread::sleep(Duration::from_millis(150));
-                                if let Ok(resp) = crate::serial::scpi_query(
+                            // 1. Disable motor first (before changing direction) so the
+                            //    firmware applies the new direction from a clean stopped state.
+                            if was_enabled {
+                                crate::serial::scpi_send(
                                     &handle,
-                                    crate::scpi::commands::MEAS_SPEED,
-                                ) {
-                                    let speed: f32 = resp.trim().parse().unwrap_or(999.0);
-                                    if speed.abs() < 10.0 {
-                                        break;
+                                    crate::scpi::commands::CONF_ENABLE_OFF,
+                                )?;
+                                // Wait until the motor has actually stopped (max ~2.5 s)
+                                for _ in 0..17 {
+                                    std::thread::sleep(Duration::from_millis(150));
+                                    if let Ok(resp) = crate::serial::scpi_query(
+                                        &handle,
+                                        crate::scpi::commands::MEAS_SPEED,
+                                    ) {
+                                        let speed: f32 = resp.trim().parse().unwrap_or(999.0);
+                                        if speed.abs() < 10.0 {
+                                            break;
+                                        }
                                     }
                                 }
                             }
 
-                            // 3. Ensure enable is off
-                            crate::serial::scpi_send(
-                                &handle,
-                                crate::scpi::commands::CONF_ENABLE_OFF,
-                            )?;
+                            // 2. Now set the direction (motor is stopped)
+                            crate::serial::scpi_send(&handle, dir_cmd)?;
+                            // Brief settle time for firmware to latch the new direction
+                            std::thread::sleep(Duration::from_millis(80));
 
-                            // 4. If motor was running, turn it back on
+                            // 3. If motor was running, turn it back on
                             if was_enabled {
-                                std::thread::sleep(Duration::from_millis(100));
                                 crate::serial::scpi_send(
                                     &handle,
                                     crate::scpi::commands::CONF_ENABLE_ON,
                                 )?;
                             }
 
-                            // 5. Confirm direction (now settled)
+                            // 4. Confirm direction from board
                             let resp = crate::serial::scpi_query(
                                 &handle,
                                 crate::scpi::commands::CONF_DIR_QUERY,
