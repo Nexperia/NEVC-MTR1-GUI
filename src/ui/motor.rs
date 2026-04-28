@@ -10,6 +10,13 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
         return not_connected_view();
     }
 
+    // Gate on firmware version >= 1.2
+    if let Some(fw_ver) = &app.firmware_version {
+        if !firmware_version_ok(fw_ver) {
+            return firmware_too_old_view(fw_ver);
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Enable / Disable
     // -----------------------------------------------------------------------
@@ -189,6 +196,43 @@ fn not_connected_view<'a>() -> Element<'a, Message> {
     ]
     .spacing(0)
     .into()
+}
+
+fn firmware_too_old_view<'a>(fw_ver: &'a str) -> Element<'a, Message> {
+    column![
+        iced::widget::Space::with_height(20),
+        text("Firmware version too old").size(18),
+        iced::widget::Space::with_height(8),
+        text(format!("Connected firmware: {}", fw_ver)).size(13),
+        text("Motor control requires firmware version 1.2 or later.").size(13),
+        iced::widget::Space::with_height(8),
+        text("Use the Firmware & Config tab to upload the latest firmware.").size(13),
+    ]
+    .spacing(4)
+    .into()
+}
+
+/// Returns true if the firmware version string contains a version >= 1.2.
+/// The version is the last `major.minor[.patch]` pattern found in the string,
+/// e.g. "NEVC-MTR1-t01-1.2.0" or "1.2.0".
+fn firmware_version_ok(fw_ver: &str) -> bool {
+    // Find the last occurrence of a dotted version number in the string.
+    let mut best: Option<(u32, u32)> = None;
+    for part in fw_ver.split(|c: char| !c.is_ascii_digit() && c != '.') {
+        let segments: Vec<&str> = part.split('.').collect();
+        if segments.len() >= 2 {
+            if let (Ok(major), Ok(minor)) = (
+                segments[0].parse::<u32>(),
+                segments[1].parse::<u32>(),
+            ) {
+                best = Some((major, minor));
+            }
+        }
+    }
+    match best {
+        Some((major, minor)) => (major, minor) >= (1, 2),
+        None => true, // Unknown format - don't block
+    }
 }
 
 fn measurement_row<'a>(label: &'a str, value: Option<f32>, unit: &'a str) -> Element<'a, Message> {
