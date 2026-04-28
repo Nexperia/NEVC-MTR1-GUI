@@ -202,6 +202,24 @@ impl FirmwareConfig {
     /// Convert the config into a 26-element Vec of display strings for UI text inputs.
     pub fn to_input_strings(&self) -> Vec<String> {
         let b = |v: bool| if v { "true".to_string() } else { "false".to_string() };
+        let adc_to_a = |adc: u32| -> String {
+            let g = self.ibus_gain as f64;
+            let r = self.ibus_sense_resistor as f64;
+            if g > 0.0 && r > 0.0 {
+                format!("{:.3}", adc as f64 * 0.004888 * 1_000_000.0 / (g * r))
+            } else {
+                adc.to_string()
+            }
+        };
+        let adc_to_v = |adc: u32| -> String {
+            let rt = self.vbus_rtop as f64;
+            let rb = self.vbus_rbottom as f64;
+            if rb > 0.0 {
+                format!("{:.2}", adc as f64 * (rt + rb) / rb * 5.0 / 1023.0)
+            } else {
+                adc.to_string()
+            }
+        };
         vec![
             self.motor_poles.to_string(),
             self.f_mosfet.to_string(),
@@ -214,8 +232,8 @@ impl FirmwareConfig {
             self.iphase_sense_resistor.to_string(),
             self.ibus_gain.to_string(),
             self.ibus_sense_resistor.to_string(),
-            self.ibus_warning_threshold.to_string(),
-            self.ibus_error_threshold.to_string(),
+            adc_to_a(self.ibus_warning_threshold),
+            adc_to_a(self.ibus_error_threshold),
             b(self.ibus_fault_enable),
             self.speed_control_method.to_string(),
             self.speed_controller_time_base.to_string(),
@@ -229,9 +247,9 @@ impl FirmwareConfig {
             self.pid_output_max.to_string(),
             self.vbus_rtop.to_string(),
             self.vbus_rbottom.to_string(),
+            adc_to_v(self.vbus_min_threshold),
             b(self.wait_for_board),
             b(self.remote_debug_mode),
-            self.vbus_min_threshold.to_string(),
         ]
     }
 
@@ -259,6 +277,30 @@ impl FirmwareConfig {
                 _ => Err((idx, format!("'{}' is not true/false", inputs[idx]))),
             }
         };
+        // Convert A → ADC for bus current thresholds using gain (idx 9) and resistor (idx 10)
+        let pa_to_adc = |idx: usize| -> Result<u32, (usize, String)> {
+            let a: f64 = inputs[idx].trim().parse::<f64>()
+                .map_err(|_| (idx, format!("'{}' is not a valid number", inputs[idx])))?;
+            let g: f64 = inputs[9].trim().parse::<f64>().unwrap_or(0.0);
+            let r: f64 = inputs[10].trim().parse::<f64>().unwrap_or(0.0);
+            if g > 0.0 && r > 0.0 {
+                Ok((a * g * r / (0.004888 * 1_000_000.0)).round() as u32)
+            } else {
+                Err((idx, "Cannot convert to ADC: Bus Current Gain or Sense Resistor is zero".to_string()))
+            }
+        };
+        // Convert V → ADC for VBUS threshold using rtop (idx 24) and rbottom (idx 25)
+        let pv_to_adc = |idx: usize| -> Result<u32, (usize, String)> {
+            let v: f64 = inputs[idx].trim().parse::<f64>()
+                .map_err(|_| (idx, format!("'{}' is not a valid number", inputs[idx])))?;
+            let rt: f64 = inputs[24].trim().parse::<f64>().unwrap_or(0.0);
+            let rb: f64 = inputs[25].trim().parse::<f64>().unwrap_or(0.0);
+            if rb > 0.0 {
+                Ok((v * rb / (rt + rb) / 5.0 * 1023.0).round() as u32)
+            } else {
+                Err((idx, "Cannot convert to ADC: VBUS resistor values are invalid".to_string()))
+            }
+        };
 
         Ok(Self {
             motor_poles:               pu(0)?,
@@ -272,8 +314,8 @@ impl FirmwareConfig {
             iphase_sense_resistor:     pu(8)?,
             ibus_gain:                 pu(9)?,
             ibus_sense_resistor:       pu(10)?,
-            ibus_warning_threshold:    pu(11)?,
-            ibus_error_threshold:      pu(12)?,
+            ibus_warning_threshold:    pa_to_adc(11)?,
+            ibus_error_threshold:      pa_to_adc(12)?,
             ibus_fault_enable:         pb(13)?,
             speed_control_method:      pu(14)?,
             speed_controller_time_base: pu(15)?,
@@ -287,9 +329,9 @@ impl FirmwareConfig {
             pid_output_max:            pu(23)?,
             vbus_rtop:                 pu(24)?,
             vbus_rbottom:              pu(25)?,
-            wait_for_board:            pb(26)?,
-            remote_debug_mode:         pb(27)?,
-            vbus_min_threshold:        if inputs.len() > 28 { pu(28)? } else { 96 },
+            vbus_min_threshold:        if inputs.len() > 26 { pv_to_adc(26)? } else { 96 },
+            wait_for_board:            pb(27)?,
+            remote_debug_mode:         pb(28)?,
         })
     }
 }

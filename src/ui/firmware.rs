@@ -17,6 +17,7 @@ use crate::serial::ConnectionState;
 pub enum ParamKind {
     UInt,
     SInt,
+    Float,               // real-unit input (A, V) converted to/from ADC in mod.rs
     Bool,
     TurnOffMode,         // 0=COAST, 1=RAMP
     SpeedControlMethod,  // 0=OPEN_LOOP, 1=CLOSED_LOOP
@@ -45,8 +46,8 @@ pub const PARAMS: &[ParamMeta] = &[
     // --- Bus Current ---
     ParamMeta { label: "Bus Current Gain",       unit: "",    help: "Hi-side bus current sense amplifier gain (NEVB: 50 or 20)",   kind: ParamKind::UInt },
     ParamMeta { label: "Bus Sense Resistor",     unit: "uOhm",help: "Bus current sense resistor value in micro-ohms (NEVB: 4000)", kind: ParamKind::UInt },
-    ParamMeta { label: "Bus Warn Threshold",     unit: "ADC", help: "Bus current warning threshold (ADC 0-1023; 307 = ~7.5 A)",    kind: ParamKind::UInt },
-    ParamMeta { label: "Bus Error Threshold",    unit: "ADC", help: "Bus current error threshold (ADC 0-1023; 410 = ~10 A)",       kind: ParamKind::UInt },
+    ParamMeta { label: "Bus Warn Threshold",     unit: "A",   help: "Bus current warning threshold",                               kind: ParamKind::Float },
+    ParamMeta { label: "Bus Error Threshold",    unit: "A",   help: "Bus current error threshold",                                kind: ParamKind::Float },
     ParamMeta { label: "Bus Fault Enable",       unit: "",    help: "Disable all PWM when bus current error threshold exceeded",   kind: ParamKind::Bool },
     // --- Speed Control ---
     ParamMeta { label: "Speed Control Method",   unit: "",    help: "Speed control: OPEN LOOP (duty cycle) or CLOSED LOOP (PID)", kind: ParamKind::SpeedControlMethod },
@@ -60,14 +61,13 @@ pub const PARAMS: &[ParamMeta] = &[
     ParamMeta { label: "PID Kd",                 unit: "",    help: "PID derivative gain constant (closed-loop only, i16)",       kind: ParamKind::SInt },
     ParamMeta { label: "PID Max I Term",         unit: "",    help: "PID integrator anti-windup limit (closed-loop only)",         kind: ParamKind::UInt },
     ParamMeta { label: "PID Output Max",         unit: "",    help: "PID output ceiling - max speed reference output (closed-loop)", kind: ParamKind::UInt },
-    // --- Voltage Sense ---
+    // --- VBUS Sense ---
     ParamMeta { label: "VBUS Top Resistor",      unit: "Ohm", help: "Top resistor of the VBUS potential divider (NEVB-MTR1-C-1: 100 kOhm)", kind: ParamKind::UInt },
     ParamMeta { label: "VBUS Bottom Resistor",   unit: "Ohm", help: "Bottom resistor of the VBUS potential divider (NEVB: 6.2 kOhm)", kind: ParamKind::UInt },
+    ParamMeta { label: "VBUS Min Threshold",     unit: "V",   help: "Minimum VBUS voltage required for motor operation",              kind: ParamKind::Float },
     // --- System ---
     ParamMeta { label: "Wait for Board",         unit: "",    help: "Wait for the inverter board to be detected before enabling motor", kind: ParamKind::Bool },
     ParamMeta { label: "Remote Debug Mode",      unit: "",    help: "Send errors to serial immediately without waiting for query", kind: ParamKind::Bool },
-    // --- VBUS Protection ---
-    ParamMeta { label: "VBUS Min Threshold",     unit: "ADC", help: "Minimum VBUS ADC count required for motor operation (0-1023)", kind: ParamKind::UInt },
 ];
 
 pub const GROUP_LABELS: &[(&str, std::ops::Range<usize>)] = &[
@@ -76,9 +76,8 @@ pub const GROUP_LABELS: &[(&str, std::ops::Range<usize>)] = &[
     ("Bus Current",     9..14),
     ("Speed Control",   14..18),
     ("PID Controller",  18..24),
-    ("Voltage Sense",   24..26),
-    ("System",          26..28),
-    ("VBUS Protection", 28..29),
+    ("VBUS Sense",      24..27),
+    ("System",          27..29),
 ];
 
 // ---------------------------------------------------------------------------
@@ -222,7 +221,7 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
                     .spacing(4)
                     .into()
                 }
-                ParamKind::UInt | ParamKind::SInt => {
+                ParamKind::UInt | ParamKind::SInt | ParamKind::Float => {
                     let i = text_input("", input_val)
                         .width(120)
                         .padding([4, 6]);
@@ -253,24 +252,49 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
             rows.push(param_row.into());
             rows.push(iced::widget::Space::with_height(4).into());
 
-            // Amps hint for bus current threshold params (indices 11 and 12)
+            // ADC estimate for bus current threshold params (enter A, show ADC)
             if idx == 11 || idx == 12 {
-                let adc_val: Option<f64> = input_val.trim().parse::<f64>().ok();
+                let a_val: Option<f64> = input_val.trim().parse::<f64>().ok();
                 let gain: Option<f64> = app.fw_param_inputs.get(9)
                     .and_then(|s| s.trim().parse::<f64>().ok());
                 let resistor_uohm: Option<f64> = app.fw_param_inputs.get(10)
                     .and_then(|s| s.trim().parse::<f64>().ok());
 
-                if let (Some(adc), Some(g), Some(r)) = (adc_val, gain, resistor_uohm) {
-                    let current_a = if g > 0.0 && r > 0.0 {
-                        adc * 0.004888 * 1_000_000.0 / (g * r)
+                if let (Some(a), Some(g), Some(r)) = (a_val, gain, resistor_uohm) {
+                    let adc_est = if g > 0.0 && r > 0.0 {
+                        a * g * r / (0.004888 * 1_000_000.0)
                     } else {
                         0.0
                     };
                     rows.push(
                         row![
                             iced::widget::Space::with_width(226),
-                            text(format!("≈ {:.2} A", current_a)).size(11)
+                            text(format!("≈ {:.0} ADC", adc_est)).size(11)
+                                .style(iced::theme::Text::Color(iced::Color::from_rgb(0.35, 0.55, 0.75))),
+                        ]
+                        .into()
+                    );
+                    rows.push(iced::widget::Space::with_height(2).into());
+                }
+            }
+            // ADC estimate for VBUS min threshold (enter V, show ADC)
+            if idx == 26 {
+                let v_val: Option<f64> = input_val.trim().parse::<f64>().ok();
+                let rtop: Option<f64> = app.fw_param_inputs.get(24)
+                    .and_then(|s| s.trim().parse::<f64>().ok());
+                let rbottom: Option<f64> = app.fw_param_inputs.get(25)
+                    .and_then(|s| s.trim().parse::<f64>().ok());
+
+                if let (Some(v), Some(rt), Some(rb)) = (v_val, rtop, rbottom) {
+                    let adc_est = if rb > 0.0 {
+                        v * rb / (rt + rb) / 5.0 * 1023.0
+                    } else {
+                        0.0
+                    };
+                    rows.push(
+                        row![
+                            iced::widget::Space::with_width(226),
+                            text(format!("≈ {:.0} ADC", adc_est)).size(11)
                                 .style(iced::theme::Text::Color(iced::Color::from_rgb(0.35, 0.55, 0.75))),
                         ]
                         .into()
