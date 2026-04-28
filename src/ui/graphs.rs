@@ -150,7 +150,7 @@ impl<'a> canvas::Program<Message> for OverlayCanvas<'a> {
         }
 
         let n = self.history.len();
-        if n < 2 { return vec![frame.into_geometry()]; }
+        if n < 1 { return vec![frame.into_geometry()]; }
 
         let t_min = self.history.front().map_or(0.0, |s| s.t);
         let t_max = self.history.back().map_or(1.0, |s| s.t);
@@ -178,6 +178,18 @@ impl<'a> canvas::Program<Message> for OverlayCanvas<'a> {
             let g = GRAPH_CHANNEL_UNIT_GROUP[ch];
             let (mn, mx) = self.ranges[g];
             if !mn.is_finite() || !mx.is_finite() { continue; }
+
+            // When all values are identical (flat line) or only one sample,
+            // draw a horizontal line across the full plot width.
+            if n < 2 || (mx - mn).abs() < 1e-9 {
+                let y = MT + ph * 0.5; // centre vertically (normalize_ch returns 0.5 for flat)
+                let flat = canvas::Path::new(|b| {
+                    b.move_to(Point::new(ML, y));
+                    b.line_to(Point::new(ML + pw, y));
+                });
+                frame.stroke(&flat, canvas::Stroke::default().with_color(PALETTE[ch]).with_width(1.5));
+                continue;
+            }
 
             let path = canvas::Path::new(|b| {
                 let mut first = true;
@@ -250,20 +262,27 @@ impl<'a> canvas::Program<Message> for SingleChannelCanvas<'a> {
         }
 
         let n = self.history.len();
-        if n < 2 { return vec![frame.into_geometry()]; }
+        if n < 1 { return vec![frame.into_geometry()]; }
 
         let t_min = self.history.front().map_or(0.0, |s| s.t);
         let t_max = self.history.back().map_or(1.0, |s| s.t);
         let t_range = if (t_max - t_min).abs() < 1e-6 { 1.0 } else { t_max - t_min };
-        let y_range = if (self.ymax - self.ymin).abs() < 1e-9 { 1.0 } else { self.ymax - self.ymin };
+        // When ymin == ymax (single or all-identical values), add a ±0.5 band so the
+        // line appears centred rather than being invisible at the very edge.
+        let (display_ymin, display_ymax) = if (self.ymax - self.ymin).abs() < 1e-9 {
+            (self.ymin - 0.5, self.ymax + 0.5)
+        } else {
+            (self.ymin, self.ymax)
+        };
+        let y_range = display_ymax - display_ymin;
 
         // Y-axis labels
         let lc = Color { r: 0.25, g: 0.25, b: 0.25, a: 1.0 };
-        frame.fill_text(ct(fmt_val(self.ymax), Point::new(ML - 3.0, MT),
+        frame.fill_text(ct(fmt_val(display_ymax), Point::new(ML - 3.0, MT),
             lc, 9.0, iced::alignment::Horizontal::Right, iced::alignment::Vertical::Top));
-        frame.fill_text(ct(fmt_val((self.ymax + self.ymin) / 2.0), Point::new(ML - 3.0, MT + ph * 0.5),
+        frame.fill_text(ct(fmt_val((display_ymax + display_ymin) / 2.0), Point::new(ML - 3.0, MT + ph * 0.5),
             lc, 9.0, iced::alignment::Horizontal::Right, iced::alignment::Vertical::Center));
-        frame.fill_text(ct(fmt_val(self.ymin), Point::new(ML - 3.0, MT + ph),
+        frame.fill_text(ct(fmt_val(display_ymin), Point::new(ML - 3.0, MT + ph),
             lc, 9.0, iced::alignment::Horizontal::Right, iced::alignment::Vertical::Bottom));
         // Unit
         frame.fill_text(ct(GRAPH_CHANNEL_UNITS[ch].to_string(), Point::new(2.0, MT + ph * 0.5),
@@ -282,18 +301,24 @@ impl<'a> canvas::Program<Message> for SingleChannelCanvas<'a> {
             t += dt;
         }
 
-        // Polyline
-        let path = canvas::Path::new(|b| {
-            let mut first = true;
-            for sample in self.history.iter() {
-                let Some(v) = sample.values[ch] else { first = true; continue; };
-                let x = ML + (sample.t - t_min) / t_range * pw;
-                let y = MT + (1.0 - (v - self.ymin) / y_range) * ph;
-                if first { b.move_to(Point::new(x, y)); first = false; }
-                else { b.line_to(Point::new(x, y)); }
-            }
-        });
-        frame.stroke(&path, canvas::Stroke::default().with_color(color).with_width(1.5));
+        // Polyline (or horizontal flat line when only one unique value / one sample)
+        if n < 2 || y_range.abs() < 1e-9 {
+            let y = MT + ph * 0.5;
+            let flat = canvas::Path::new(|b| { b.move_to(Point::new(ML, y)); b.line_to(Point::new(ML + pw, y)); });
+            frame.stroke(&flat, canvas::Stroke::default().with_color(color).with_width(1.5));
+        } else {
+            let path = canvas::Path::new(|b| {
+                let mut first = true;
+                for sample in self.history.iter() {
+                    let Some(v) = sample.values[ch] else { first = true; continue; };
+                    let x = ML + (sample.t - t_min) / t_range * pw;
+                    let y = MT + (1.0 - (v - display_ymin) / y_range) * ph;
+                    if first { b.move_to(Point::new(x, y)); first = false; }
+                    else { b.line_to(Point::new(x, y)); }
+                }
+            });
+            frame.stroke(&path, canvas::Stroke::default().with_color(color).with_width(1.5));
+        }
 
         vec![frame.into_geometry()]
     }
