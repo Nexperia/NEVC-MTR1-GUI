@@ -108,25 +108,43 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
     // Firmware info (populated after *IDN?)
     // -----------------------------------------------------------------------
     let firmware_section: Element<Message> = if app.connection == ConnectionState::Connected {
-        let fw_ver = app
-            .firmware_version
-            .as_deref()
-            .unwrap_or("(querying…)");
-        let manufacturer = app.idn_manufacturer.as_deref().unwrap_or("");
-        let model = app.idn_model.as_deref().unwrap_or("");
-        let serial = app.idn_serial.as_deref().unwrap_or("");
+        let fw_ver = app.firmware_version.as_deref().unwrap_or("(querying…)");
+        let manufacturer = app.idn_manufacturer.as_deref().unwrap_or("(querying…)");
+        let model = app.idn_model.as_deref().unwrap_or("(querying…)");
+        let serial = app.idn_serial.as_deref().unwrap_or("(querying…)");
+
+        let dim = iced::Color::from_rgb(0.45, 0.45, 0.45);
+        let lw: u16 = 100;
+        let info_row = |label: &'static str, value: &str| -> Element<'_, Message> {
+            row![
+                container(text(label).size(13).style(iced::theme::Text::Color(dim)))
+                    .width(lw),
+                text(value).size(13),
+            ]
+            .spacing(0)
+            .align_items(Alignment::Center)
+            .into()
+        };
+
+        let info_col = column![
+            info_row("Manufacturer", manufacturer),
+            info_row("Model", model),
+            info_row("Firmware", fw_ver),
+            info_row("IDN Serial", serial),
+        ]
+        .spacing(6);
 
         column![
-            text("Device Information").size(16),
-            text(format!("Manufacturer : {}", manufacturer)).size(13),
-            text(format!("Model        : {}", model)).size(13),
-            text(format!("Firmware     : {}", fw_ver)).size(13),
-            text(format!("Serial field : {}", serial)).size(13),
+            text("Device Information").size(15),
+            iced::widget::Space::with_height(8),
+            container(info_col)
+                .padding([10, 14])
+                .style(iced::theme::Container::Box),
         ]
-        .spacing(4)
+        .spacing(0)
         .into()
     } else {
-        text("Connect to a device to view firmware information.").size(13).into()
+        text("Connect to a device to view device information.").size(13).into()
     };
 
     // -----------------------------------------------------------------------
