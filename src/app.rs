@@ -1224,7 +1224,12 @@ impl Application for NevcApp {
                 }
                 self.flash_log.clear();
                 self.flash_log_content = iced::widget::text_editor::Content::with_text("");
-                self.flash_status = FlashStatus::Busy("Checking for Arduino CLI…".to_string());
+                let initial_status = if crate::firmware::is_arduino_cli_ready() {
+                    "Checking for Arduino CLI…".to_string()
+                } else {
+                    "First-time setup: downloading Arduino CLI and AVR toolchain (may take several minutes)…".to_string()
+                };
+                self.flash_status = FlashStatus::Busy(initial_status);
                 self.flash_log.push(format!("[Flash] Starting… port={}", port));
                 self.refresh_flash_content();
                 Command::perform(

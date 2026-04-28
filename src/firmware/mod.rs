@@ -392,6 +392,11 @@ const ARDUINO_CLI_EXE: &str = "arduino-cli.exe";
 const GITHUB_RELEASES_API: &str =
     "https://api.github.com/repos/arduino/arduino-cli/releases/latest";
 
+/// Returns true if arduino-cli.exe is already present locally (no download needed).
+pub fn is_arduino_cli_ready() -> bool {
+    tools_dir().join(ARDUINO_CLI_EXE).exists()
+}
+
 /// Returns the path to arduino-cli.exe, downloading it if necessary.
 /// Calls `progress(msg)` to report download or install steps.
 pub fn ensure_arduino_cli(mut progress: impl FnMut(&str)) -> anyhow::Result<PathBuf> {
