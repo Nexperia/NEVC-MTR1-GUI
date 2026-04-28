@@ -64,6 +64,11 @@ pub const PARAMS: &[ParamMeta] = &[
     // --- System ---
     ParamMeta { label: "Wait for Board",         unit: "",    help: "Wait for the inverter board to be detected before enabling motor", kind: ParamKind::Bool },
     ParamMeta { label: "Remote Debug Mode",      unit: "",    help: "Send errors to serial immediately without waiting for query", kind: ParamKind::Bool },
+    // --- PID Limits ---
+    ParamMeta { label: "PID Max I Term",         unit: "",    help: "PID integrator anti-windup limit (closed-loop only)",         kind: ParamKind::UInt },
+    ParamMeta { label: "PID Output Max",         unit: "",    help: "PID output ceiling - max speed reference output (closed-loop)", kind: ParamKind::UInt },
+    // --- VBUS Protection ---
+    ParamMeta { label: "VBUS Min Threshold",     unit: "ADC", help: "Minimum VBUS ADC count required for motor operation (0-1023)", kind: ParamKind::UInt },
 ];
 
 pub const GROUP_LABELS: &[(&str, std::ops::Range<usize>)] = &[
@@ -74,6 +79,8 @@ pub const GROUP_LABELS: &[(&str, std::ops::Range<usize>)] = &[
     ("PID Controller",  18..22),
     ("Voltage Sense",   22..24),
     ("System",          24..26),
+    ("PID Limits",      26..28),
+    ("VBUS Protection", 28..29),
 ];
 
 // ---------------------------------------------------------------------------
@@ -128,12 +135,13 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
         .map(|v| v == "1" || v.to_uppercase().contains("CLOSED"))
         .unwrap_or(false);
     const PID_RANGE: std::ops::Range<usize> = 18..22;
+    const PID_LIMITS_RANGE: std::ops::Range<usize> = 26..28;
 
     let mut param_groups: Vec<Element<Message>> = Vec::new();
 
     for (group_label, range) in GROUP_LABELS {
         // Dim the entire PID group when open-loop is selected
-        let group_dimmed = group_label == &"PID Controller" && !is_closed_loop;
+        let group_dimmed = (group_label == &"PID Controller" || group_label == &"PID Limits") && !is_closed_loop;
 
         let mut rows: Vec<Element<Message>> = Vec::new();
         let group_label_widget = if group_dimmed {
@@ -152,7 +160,7 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
         for idx in range.clone() {
             let meta = &PARAMS[idx];
             let input_val = app.fw_param_inputs.get(idx).map(|s| s.as_str()).unwrap_or("");
-            let param_dimmed = group_dimmed || (PID_RANGE.contains(&idx) && !is_closed_loop);
+            let param_dimmed = group_dimmed || ((PID_RANGE.contains(&idx) || PID_LIMITS_RANGE.contains(&idx)) && !is_closed_loop);
 
             let dim_color = iced::Color::from_rgb(0.6, 0.6, 0.6);
             let label_text = if param_dimmed {

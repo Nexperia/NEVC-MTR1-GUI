@@ -67,6 +67,12 @@ pub struct FirmwareConfig {
     pub wait_for_board: bool,
     // [25] Report errors immediately over serial without query (bool)
     pub remote_debug_mode: bool,
+    // [26] PID integrator anti-windup limit (closed-loop only)
+    pub pid_max_i_term: u32,
+    // [27] PID output ceiling (closed-loop only)
+    pub pid_output_max: u32,
+    // [28] Minimum VBUS ADC count required for motor operation
+    pub vbus_min_threshold: u32,
 }
 
 impl Default for FirmwareConfig {
@@ -99,6 +105,9 @@ impl Default for FirmwareConfig {
             vbus_rbottom: 6200,
             wait_for_board: true,
             remote_debug_mode: false,
+            pid_max_i_term: 100000,
+            pid_output_max: 200,
+            vbus_min_threshold: 96,
         }
     }
 }
@@ -147,6 +156,9 @@ impl FirmwareConfig {
             vbus_rbottom:              pu(fields[23])?,
             wait_for_board:            pb(fields[24])?,
             remote_debug_mode:         pb(fields[25])?,
+            pid_max_i_term:            fields.get(26).and_then(|s| pu(s)).unwrap_or(100000),
+            pid_output_max:            fields.get(27).and_then(|s| pu(s)).unwrap_or(200),
+            vbus_min_threshold:        fields.get(28).and_then(|s| pu(s)).unwrap_or(96),
         })
     }
 
@@ -154,7 +166,7 @@ impl FirmwareConfig {
     pub fn to_idn_serial(&self) -> String {
         let bool_hex = |b: bool| if b { "1" } else { "0" };
         format!(
-            "{:X}-{:X}-{:X}-{}-{:X}-{:X}-{:X}-{:X}-{:X}-{:X}-{:X}-{:X}-{:X}-{}-{:X}-{:X}-{:X}-{:X}-{:X}-{:X}-{}-{:X}-{:X}-{:X}-{}-{}",
+            "{:X}-{:X}-{:X}-{}-{:X}-{:X}-{:X}-{:X}-{:X}-{:X}-{:X}-{:X}-{:X}-{}-{:X}-{:X}-{:X}-{:X}-{:X}-{:X}-{}-{:X}-{:X}-{:X}-{}-{}-{:X}-{:X}-{:X}",
             self.motor_poles,
             self.f_mosfet,
             self.dead_time,
@@ -181,6 +193,9 @@ impl FirmwareConfig {
             self.vbus_rbottom,
             bool_hex(self.wait_for_board),
             bool_hex(self.remote_debug_mode),
+            self.pid_max_i_term,
+            self.pid_output_max,
+            self.vbus_min_threshold,
         )
     }
 
@@ -214,6 +229,9 @@ impl FirmwareConfig {
             self.vbus_rbottom.to_string(),
             b(self.wait_for_board),
             b(self.remote_debug_mode),
+            self.pid_max_i_term.to_string(),
+            self.pid_output_max.to_string(),
+            self.vbus_min_threshold.to_string(),
         ]
     }
 
@@ -269,6 +287,9 @@ impl FirmwareConfig {
             vbus_rbottom:              pu(23)?,
             wait_for_board:            pb(24)?,
             remote_debug_mode:         pb(25)?,
+            pid_max_i_term:            if inputs.len() > 26 { pu(26)? } else { 100000 },
+            pid_output_max:            if inputs.len() > 27 { pu(27)? } else { 200 },
+            vbus_min_threshold:        if inputs.len() > 28 { pu(28)? } else { 96 },
         })
     }
 }
@@ -316,6 +337,9 @@ pub fn patch_config_h(source: &str, config: &FirmwareConfig) -> String {
         ("VBUS_RBOTTOM",                config.vbus_rbottom.to_string()),
         ("WAIT_FOR_BOARD",              bool_define(config.wait_for_board)),
         ("REMOTE_DEBUG_MODE",           bool_define(config.remote_debug_mode)),
+        ("PID_MAX_I_TERM",              config.pid_max_i_term.to_string()),
+        ("PID_OUTPUT_MAX",              config.pid_output_max.to_string()),
+        ("VBUS_MIN_THRESHOLD",          config.vbus_min_threshold.to_string()),
     ];
 
     let mut lines: Vec<String> = source.lines().map(|l| l.to_string()).collect();
