@@ -8,7 +8,7 @@
 
 [![License - MIT/X Consortium](https://img.shields.io/badge/License-MIT%2FX%20Consortium-green)](https://github.com/Nexperia/NEVB-MTR1-t01/blob/main/LICENSE)
 
-Windows GUI for controlling the Nexperia NEVC-MTR1 motor driver board via SCPI over USB-serial.
+Cross-platform GUI for controlling the Nexperia NEVC-MTR1 motor driver board via SCPI over USB-serial.
 
 The GUI connects to an Arduino Leonardo running the
 [NEVC-MTR1-t01 firmware](https://github.com/Nexperia/NEVC-MTR1-t01) and provides:
