@@ -5,6 +5,15 @@
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
 use iced::{Element, Length};
 
+/// Segoe UI Symbol ships on all Windows versions and covers the ⚠ glyph
+/// absent from the bundled Ubuntu font.
+const SYM_FONT: iced::Font = iced::Font {
+    family: iced::font::Family::Name("Segoe UI Symbol"),
+    weight: iced::font::Weight::Normal,
+    style: iced::font::Style::Normal,
+    stretch: iced::font::Stretch::Normal,
+};
+
 use crate::app::{FlashStatus, FwConfigSource, Message, NevcApp};
 use crate::serial::ConnectionState;
 
@@ -272,19 +281,25 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
                     } else {
                         iced::Color::from_rgb(0.35, 0.55, 0.75)
                     };
-                    let hint_str = if overflow {
-                        format!("≈ {:.0} ADC  ⚠ out of range (0–1023)", adc_est)
-                    } else {
-                        format!("≈ {:.0} ADC", adc_est)
-                    };
-                    rows.push(
+                    let hint_row: Element<Message> = if overflow {
                         row![
                             iced::widget::Space::with_width(226),
-                            text(hint_str).size(11)
+                            text("⚠").size(11).font(SYM_FONT)
+                                .style(iced::theme::Text::Color(hint_color)),
+                            text(format!(" ≈ {:.0} ADC  out of range (0–1023)", adc_est)).size(11)
+                                .style(iced::theme::Text::Color(hint_color)),
+                        ]
+                        .align_items(iced::Alignment::Center)
+                        .into()
+                    } else {
+                        row![
+                            iced::widget::Space::with_width(226),
+                            text(format!("≈ {:.0} ADC", adc_est)).size(11)
                                 .style(iced::theme::Text::Color(hint_color)),
                         ]
                         .into()
-                    );
+                    };
+                    rows.push(hint_row);
                     rows.push(iced::widget::Space::with_height(2).into());
                 }
             }
@@ -308,19 +323,25 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
                     } else {
                         iced::Color::from_rgb(0.35, 0.55, 0.75)
                     };
-                    let hint_str = if overflow {
-                        format!("≈ {:.0} ADC  ⚠ out of range (0–1023)", adc_est)
-                    } else {
-                        format!("≈ {:.0} ADC", adc_est)
-                    };
-                    rows.push(
+                    let hint_row2: Element<Message> = if overflow {
                         row![
                             iced::widget::Space::with_width(226),
-                            text(hint_str).size(11)
+                            text("⚠").size(11).font(SYM_FONT)
+                                .style(iced::theme::Text::Color(hint_color)),
+                            text(format!(" ≈ {:.0} ADC  out of range (0–1023)", adc_est)).size(11)
+                                .style(iced::theme::Text::Color(hint_color)),
+                        ]
+                        .align_items(iced::Alignment::Center)
+                        .into()
+                    } else {
+                        row![
+                            iced::widget::Space::with_width(226),
+                            text(format!("≈ {:.0} ADC", adc_est)).size(11)
                                 .style(iced::theme::Text::Color(hint_color)),
                         ]
                         .into()
-                    );
+                    };
+                    rows.push(hint_row2);
                     rows.push(iced::widget::Space::with_height(2).into());
                 }
             }
@@ -331,7 +352,11 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
                 if is_on {
                     rows.push(
                         container(
-                            text("⚠  Debug use only. Do NOT connect a motor with both phase AND hall sensor\n   connections at the same time. Use this mode only to verify gate outputs\n   are correct during the different commutation stages.").size(11)
+                            row![
+                                text("⚠").size(11).font(SYM_FONT),
+                                text("  Debug use only. Do NOT connect a motor with both phase AND hall sensor\n   connections at the same time. Use this mode only to verify gate outputs\n   are correct during the different commutation stages.").size(11),
+                            ]
+                            .align_items(iced::Alignment::Start)
                         )
                         .padding([5, 12])
                         .style(iced::theme::Container::Box)
@@ -384,7 +409,11 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
     } else {
         let warning_port = app.selected_port.as_deref().unwrap_or("(none)");
         column![
-            text("\u{26a0}  No device connected.").size(14),
+            row![
+                text("⚠").size(14).font(SYM_FONT),
+                text("  No device connected.").size(14),
+            ]
+            .align_items(iced::Alignment::Center),
             text(format!(
                 "Currently selected port: {}. Go to the Connection tab to select the correct COM port before uploading.",
                 warning_port
