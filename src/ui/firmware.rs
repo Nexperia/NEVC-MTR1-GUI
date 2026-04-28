@@ -328,13 +328,20 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
 
     let port_hint: Element<Message> = if app.connection == ConnectionState::Connected {
         let port = app.selected_port.as_deref().unwrap_or("?");
-        text(format!("Port: {}  (will be reset to bootloader)", port))
-            .size(12)
+        text(format!("Upload target: {}  (will be reset to bootloader for upload)", port))
+            .size(14)
             .into()
     } else {
-        text("Not connected. Select port in Connection tab (port will still be used for flashing).")
-            .size(12)
-            .into()
+        let warning_port = app.selected_port.as_deref().unwrap_or("(none)");
+        column![
+            text("\u{26a0}  No device connected.").size(14),
+            text(format!(
+                "Currently selected port: {}. Go to the Connection tab to select the correct COM port before uploading.",
+                warning_port
+            )).size(13),
+        ]
+        .spacing(4)
+        .into()
     };
 
     // Flash log - selectable/copyable

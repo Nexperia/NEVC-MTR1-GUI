@@ -215,7 +215,7 @@ fn firmware_too_old_view<'a>(fw_ver: &'a str) -> Element<'a, Message> {
 /// Returns true if the firmware version string contains a version >= 1.2.
 /// The version is the last `major.minor[.patch]` pattern found in the string,
 /// e.g. "NEVC-MTR1-t01-1.2.0" or "1.2.0".
-fn firmware_version_ok(fw_ver: &str) -> bool {
+pub fn firmware_version_ok(fw_ver: &str) -> bool {
     // Find the last occurrence of a dotted version number in the string.
     let mut best: Option<(u32, u32)> = None;
     for part in fw_ver.split(|c: char| !c.is_ascii_digit() && c != '.') {

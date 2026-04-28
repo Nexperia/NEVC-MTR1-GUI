@@ -338,6 +338,23 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
         .into();
     }
 
+    // Gate on firmware version >= 1.2
+    if let Some(fw_ver) = &app.firmware_version {
+        if !crate::ui::motor::firmware_version_ok(fw_ver) {
+            return column![
+                iced::widget::Space::with_height(20),
+                text("Firmware version too old").size(18),
+                iced::widget::Space::with_height(8),
+                text(format!("Connected firmware: {}", fw_ver)).size(13),
+                text("Live graphing requires firmware version 1.2 or later.").size(13),
+                iced::widget::Space::with_height(8),
+                text("Use the Firmware & Config tab to upload the latest firmware.").size(13),
+            ]
+            .spacing(4)
+            .into();
+        }
+    }
+
     let has_data = !app.graph_history.is_empty();
 
     // ---- Controls -----------------------------------------------------------
