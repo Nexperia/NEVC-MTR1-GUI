@@ -1325,6 +1325,16 @@ impl Application for NevcApp {
                                 .map_err(|e| format!("Cannot write config.h: {}", e))?;
                             p("config.h updated.");
 
+                            // Patch scpi.cpp (fix double bit-shift cast error)
+                            let scpi_cpp = src_dir.join("scpi.cpp");
+                            if scpi_cpp.exists() {
+                                let src = std::fs::read_to_string(&scpi_cpp)
+                                    .map_err(|e| format!("Cannot read scpi.cpp: {}", e))?;
+                                let src_patched = crate::firmware::patch_scpi_cpp(&src);
+                                std::fs::write(&scpi_cpp, src_patched.as_bytes())
+                                    .map_err(|e| format!("Cannot write scpi.cpp: {}", e))?;
+                            }
+
                             // Compile
                             crate::firmware::compile_sketch(&cli, &src_dir, &mut p)
                                 .map_err(|e| e.to_string())?;
