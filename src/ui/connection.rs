@@ -151,11 +151,21 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
         .spacing(3)
         .into()
     } else {
-        text(format!(
-            "Arduino Leonardo detected on: {}",
-            arduino_ports.join(", ")
-        ))
-        .size(13)
+        column![
+            text(format!(
+                "Arduino Leonardo detected on: {}",
+                arduino_ports.join(", ")
+            ))
+            .size(13),
+            iced::widget::Space::with_height(10),
+            text("REMOTE pin required for SCPI").size(14),
+            text("The SCPI interface is only enabled when the REMOTE pin (PD3) is HIGH at startup.").size(12),
+            text("If the board connects but does not respond:").size(12),
+            text("  1. Ensure the REMOTE pin is pulled HIGH (or jumpered to VCC).").size(12),
+            text("  2. Press the reset button or power-cycle the board.").size(12),
+            text("  3. Then click Connect.").size(12),
+        ]
+        .spacing(3)
         .into()
     };
 
