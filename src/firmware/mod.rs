@@ -351,6 +351,20 @@ fn bool_define(v: bool) -> String {
     if v { "TRUE".to_string() } else { "FALSE".to_string() }
 }
 
+/// Fix a missing cast in scpi.cpp that causes a compile error when closed-loop
+/// speed control is selected: `param` is `double` but was bit-shifted directly.
+///
+/// Replaces:
+///   `((param * SPEED_CONTROLLER_MAX_INPUT * MOTOR_POLES) >> 3)`
+/// with:
+///   `((uint32_t)(param * SPEED_CONTROLLER_MAX_INPUT * MOTOR_POLES) >> 3)`
+pub fn patch_scpi_cpp(source: &str) -> String {
+    source.replace(
+        "((param * SPEED_CONTROLLER_MAX_INPUT * MOTOR_POLES) >> 3)",
+        "((uint32_t)(param * SPEED_CONTROLLER_MAX_INPUT * MOTOR_POLES) >> 3)",
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Application data directory
 // ---------------------------------------------------------------------------
@@ -606,6 +620,16 @@ pub fn full_flash_pipeline(
     std::fs::write(&config_h_path, patched.as_bytes())
         .map_err(|e| anyhow::anyhow!("Could not write config.h: {}", e))?;
     progress("config.h updated.");
+
+    // Step 4b: patch scpi.cpp (fix double bit-shift cast error on line ~416)
+    let scpi_cpp_path = sketch_dir.join("scpi.cpp");
+    if scpi_cpp_path.exists() {
+        let scpi_src = std::fs::read_to_string(&scpi_cpp_path)
+            .map_err(|e| anyhow::anyhow!("Could not read scpi.cpp: {}", e))?;
+        let scpi_patched = patch_scpi_cpp(&scpi_src);
+        std::fs::write(&scpi_cpp_path, scpi_patched.as_bytes())
+            .map_err(|e| anyhow::anyhow!("Could not write scpi.cpp: {}", e))?;
+    }
 
     // Step 5: compile
     compile_sketch(&cli, &sketch_dir, &mut progress)?;
