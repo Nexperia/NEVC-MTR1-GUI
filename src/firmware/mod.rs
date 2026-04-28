@@ -483,27 +483,81 @@ pub fn ensure_avr_core(cli: &Path, mut progress: impl FnMut(&str)) -> anyhow::Re
 const FIRMWARE_REPO_ZIP_URL: &str =
     "https://github.com/Nexperia/NEVC-MTR1-t01/archive/refs/heads/main.zip";
 
+/// GitHub API endpoint to get the current HEAD SHA of the main branch.
+const FIRMWARE_REPO_COMMITS_API: &str =
+    "https://api.github.com/repos/Nexperia/NEVC-MTR1-t01/commits/main";
+
 /// Expected top-level directory name inside the downloaded ZIP archive.
 const FIRMWARE_ZIP_ROOT: &str = "NEVC-MTR1-t01-main";
 
-/// Download and extract the firmware source if not already cached.
+/// File that stores the commit SHA of the last successfully downloaded firmware.
+fn firmware_sha_file() -> PathBuf {
+    firmware_dir().join(FIRMWARE_ZIP_ROOT).join(".commit_sha")
+}
+
+/// Fetch the current HEAD commit SHA of the firmware repo's main branch.
+fn fetch_remote_sha(client: &reqwest::blocking::Client) -> anyhow::Result<String> {
+    let resp: serde_json::Value = client
+        .get(FIRMWARE_REPO_COMMITS_API)
+        .send()
+        .map_err(|e| anyhow::anyhow!("Could not reach GitHub API: {}", e))?
+        .json()
+        .map_err(|e| anyhow::anyhow!("Could not parse GitHub API response: {}", e))?;
+    resp["sha"]
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow::anyhow!("No SHA in GitHub API response"))
+}
+
+/// Download and extract the firmware source, only re-downloading if the HEAD
+/// commit SHA on the main branch has changed since the last download.
 /// Returns the path to the `main/` sketch directory.
 pub fn ensure_firmware_source(mut progress: impl FnMut(&str)) -> anyhow::Result<PathBuf> {
     let dest = firmware_dir().join(FIRMWARE_ZIP_ROOT);
     let sketch = dest.join("main");
     let sentinel = sketch.join("main.ino");
 
-    if sentinel.exists() {
-        progress("Firmware source already cached.");
-        return Ok(sketch);
-    }
-
-    progress("Downloading firmware source from GitHub…");
-    std::fs::create_dir_all(&firmware_dir())?;
-
     let client = reqwest::blocking::Client::builder()
         .user_agent("nevc_mtr1_gui/1.0")
         .build()?;
+
+    // Fetch current remote SHA (fast - just a small JSON request)
+    progress("Checking firmware version on GitHub…");
+    let remote_sha = match fetch_remote_sha(&client) {
+        Ok(sha) => sha,
+        Err(e) => {
+            // If we can't reach GitHub but have a cached copy, use it
+            if sentinel.exists() {
+                progress(&format!("Warning: could not check for updates ({}). Using cached firmware.", e));
+                return Ok(sketch);
+            }
+            return Err(e);
+        }
+    };
+
+    // Compare with locally stored SHA
+    let local_sha = std::fs::read_to_string(firmware_sha_file()).unwrap_or_default();
+    let local_sha = local_sha.trim().to_string();
+
+    if sentinel.exists() && local_sha == remote_sha {
+        progress(&format!("Firmware source up to date ({})", &remote_sha[..8]));
+        return Ok(sketch);
+    }
+
+    if sentinel.exists() {
+        progress(&format!(
+            "Firmware updated on GitHub ({} → {}), re-downloading…",
+            if local_sha.len() >= 8 { &local_sha[..8] } else { "unknown" },
+            &remote_sha[..8]
+        ));
+        std::fs::remove_dir_all(&dest)
+            .map_err(|e| anyhow::anyhow!("Could not clear firmware cache: {}", e))?;
+    } else {
+        progress("Downloading firmware source from GitHub…");
+    }
+
+    std::fs::create_dir_all(&firmware_dir())?;
+
     let zip_bytes = client
         .get(FIRMWARE_REPO_ZIP_URL)
         .send()
@@ -520,6 +574,9 @@ pub fn ensure_firmware_source(mut progress: impl FnMut(&str)) -> anyhow::Result<
             sentinel.display()
         ));
     }
+
+    // Store the SHA so next run can skip the download if nothing changed
+    let _ = std::fs::write(firmware_sha_file(), remote_sha.as_bytes());
 
     progress(&format!("Firmware source ready at {}", sketch.display()));
     Ok(sketch)
