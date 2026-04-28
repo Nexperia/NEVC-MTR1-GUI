@@ -122,12 +122,29 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
     // -----------------------------------------------------------------------
     // Parameter groups
     // -----------------------------------------------------------------------
+    // PID params (indices 18-21) are only active when closed-loop is selected.
+    let is_closed_loop = app.fw_param_inputs
+        .get(14)
+        .map(|v| v == "1" || v.to_uppercase().contains("CLOSED"))
+        .unwrap_or(false);
+    const PID_RANGE: std::ops::Range<usize> = 18..22;
+
     let mut param_groups: Vec<Element<Message>> = Vec::new();
 
     for (group_label, range) in GROUP_LABELS {
+        // Dim the entire PID group when open-loop is selected
+        let group_dimmed = group_label == &"PID Controller" && !is_closed_loop;
+
         let mut rows: Vec<Element<Message>> = Vec::new();
+        let group_label_widget = if group_dimmed {
+            text(format!("{} (open loop - not used)", group_label))
+                .size(15)
+                .style(iced::theme::Text::Color(iced::Color::from_rgb(0.6, 0.6, 0.6)))
+        } else {
+            text(*group_label).size(15)
+        };
         rows.push(
-            container(text(*group_label).size(15))
+            container(group_label_widget)
                 .padding([6, 0, 2, 0])
                 .into(),
         );
@@ -135,8 +152,18 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
         for idx in range.clone() {
             let meta = &PARAMS[idx];
             let input_val = app.fw_param_inputs.get(idx).map(|s| s.as_str()).unwrap_or("");
-            let label_text = if meta.unit.is_empty() {
-                text(meta.label).size(13)
+            let param_dimmed = group_dimmed || (PID_RANGE.contains(&idx) && !is_closed_loop);
+
+            let dim_color = iced::Color::from_rgb(0.6, 0.6, 0.6);
+            let label_text = if param_dimmed {
+                let label = if meta.unit.is_empty() {
+                    meta.label.to_string()
+                } else {
+                    format!("{} ({})", meta.label, meta.unit)
+                };
+                text(label).size(13).style(iced::theme::Text::Color(dim_color))
+            } else if meta.unit.is_empty() {
+                text(meta.label.to_string()).size(13)
             } else {
                 text(format!("{} ({})", meta.label, meta.unit)).size(13)
             };
@@ -144,18 +171,22 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
             let input_widget: Element<Message> = match meta.kind {
                 ParamKind::Bool => {
                     let is_true = input_val.to_lowercase() == "true" || input_val == "1";
-                    row![
-                        button(text("TRUE").size(12))
-                            .style(if is_true { iced::theme::Button::Custom(Box::new(crate::ui::style::FilledButton)) } else { iced::theme::Button::Secondary })
-                            .on_press(Message::FwParamChanged(idx, "true".to_string()))
-                            .padding([3, 10]),
-                        button(text("FALSE").size(12))
-                            .style(if !is_true { iced::theme::Button::Custom(Box::new(crate::ui::style::FilledButton)) } else { iced::theme::Button::Secondary })
-                            .on_press(Message::FwParamChanged(idx, "false".to_string()))
-                            .padding([3, 10]),
+                    let r = row![
+                        {
+                            let b = button(text("TRUE").size(12))
+                                .style(if is_true { iced::theme::Button::Custom(Box::new(crate::ui::style::FilledButton)) } else { iced::theme::Button::Secondary })
+                                .padding([3, 10]);
+                            if param_dimmed { b } else { b.on_press(Message::FwParamChanged(idx, "true".to_string())) }
+                        },
+                        {
+                            let b = button(text("FALSE").size(12))
+                                .style(if !is_true { iced::theme::Button::Custom(Box::new(crate::ui::style::FilledButton)) } else { iced::theme::Button::Secondary })
+                                .padding([3, 10]);
+                            if param_dimmed { b } else { b.on_press(Message::FwParamChanged(idx, "false".to_string())) }
+                        },
                     ]
-                    .spacing(4)
-                    .into()
+                    .spacing(4);
+                    r.into()
                 }
                 ParamKind::TurnOffMode => {
                     let is_ramp = input_val == "1" || input_val.to_uppercase().contains("RAMP");
@@ -188,12 +219,21 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
                     .into()
                 }
                 ParamKind::UInt | ParamKind::SInt => {
-                    text_input("", input_val)
-                        .on_input(move |s| Message::FwParamChanged(idx, s))
+                    let i = text_input("", input_val)
                         .width(120)
-                        .padding([4, 6])
-                        .into()
+                        .padding([4, 6]);
+                    if param_dimmed {
+                        i.into()
+                    } else {
+                        i.on_input(move |s| Message::FwParamChanged(idx, s)).into()
+                    }
                 }
+            };
+
+            let help_text: Element<Message> = if param_dimmed {
+                text(meta.help).size(11).style(iced::theme::Text::Color(iced::Color::from_rgb(0.6, 0.6, 0.6))).into()
+            } else {
+                text(meta.help).size(11).into()
             };
 
             let param_row = row![
@@ -201,7 +241,7 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
                     .width(220),
                 input_widget,
                 iced::widget::Space::with_width(12),
-                text(meta.help).size(11),
+                help_text,
             ]
             .spacing(6)
             .align_items(iced::Alignment::Center);
