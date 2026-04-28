@@ -374,6 +374,23 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
                     rows.push(iced::widget::Space::with_height(4).into());
                 }
             }
+
+            // Live validation error for this parameter
+            if let Some(Some(err_msg)) = app.fw_param_errors.get(idx) {
+                let err_color = iced::Color::from_rgb(0.85, 0.2, 0.2);
+                rows.push(
+                    row![
+                        iced::widget::Space::with_width(226),
+                        text("⚠").size(11).font(SYM_FONT)
+                            .style(iced::theme::Text::Color(err_color)),
+                        text(format!("  {}", err_msg)).size(11)
+                            .style(iced::theme::Text::Color(err_color)),
+                    ]
+                    .align_items(iced::Alignment::Center)
+                    .into()
+                );
+                rows.push(iced::widget::Space::with_height(2).into());
+            }
         }
 
         for w in rows {

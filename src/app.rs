@@ -151,6 +151,7 @@ pub struct NevcApp {
     pub firmware_config: crate::firmware::FirmwareConfig,
     pub firmware_config_source: FwConfigSource,
     pub fw_param_inputs: Vec<String>,
+    pub fw_param_errors: Vec<Option<String>>,
     pub flash_log_content: iced::widget::text_editor::Content,
     pub fw_reconnect_after_flash: bool,
 
@@ -318,6 +319,7 @@ impl Application for NevcApp {
             firmware_config: crate::firmware::FirmwareConfig::default(),
             firmware_config_source: FwConfigSource::Repo,
             fw_param_inputs: crate::firmware::FirmwareConfig::default().to_input_strings(),
+            fw_param_errors: vec![None; crate::ui::firmware::PARAMS.len()],
             flash_log_content: iced::widget::text_editor::Content::with_text(""),
             fw_reconnect_after_flash: false,
             serial_handle: None,
@@ -1200,6 +1202,7 @@ impl Application for NevcApp {
                         }
                     }
                 }
+                for e in &mut self.fw_param_errors { *e = None; }
                 Command::none()
             }
 
@@ -1209,6 +1212,17 @@ impl Application for NevcApp {
                 if let Some(slot) = self.fw_param_inputs.get_mut(idx) {
                     *slot = value;
                 }
+                // Live validation: run try_from_inputs and update per-field errors
+                match crate::firmware::FirmwareConfig::try_from_inputs(&self.fw_param_inputs) {
+                    Ok(_) => {
+                        for e in &mut self.fw_param_errors { *e = None; }
+                    }
+                    Err((err_idx, msg)) => {
+                        for (i, e) in self.fw_param_errors.iter_mut().enumerate() {
+                            *e = if i == err_idx { Some(msg.clone()) } else { None };
+                        }
+                    }
+                }
                 Command::none()
             }
 
@@ -1216,7 +1230,10 @@ impl Application for NevcApp {
                 // Parse all inputs into a config struct
                 match crate::firmware::FirmwareConfig::try_from_inputs(&self.fw_param_inputs) {
                     Err((idx, msg)) => {
-                        self.flash_status = FlashStatus::Failed(format!("Parameter {}: {}", idx, msg));
+                        let param_name = crate::ui::firmware::PARAMS.get(idx)
+                            .map(|p| p.label)
+                            .unwrap_or("Unknown parameter");
+                        self.flash_status = FlashStatus::Failed(format!("{}: {}", param_name, msg));
                         return Command::none();
                     }
                     Ok(config) => {
