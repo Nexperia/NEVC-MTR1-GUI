@@ -266,11 +266,22 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
                     } else {
                         0.0
                     };
+                    let overflow = !(0.0..=1023.0).contains(&adc_est);
+                    let hint_color = if overflow {
+                        iced::Color::from_rgb(0.85, 0.2, 0.2)
+                    } else {
+                        iced::Color::from_rgb(0.35, 0.55, 0.75)
+                    };
+                    let hint_str = if overflow {
+                        format!("≈ {:.0} ADC  ⚠ out of range (0–1023)", adc_est)
+                    } else {
+                        format!("≈ {:.0} ADC", adc_est)
+                    };
                     rows.push(
                         row![
                             iced::widget::Space::with_width(226),
-                            text(format!("≈ {:.0} ADC", adc_est)).size(11)
-                                .style(iced::theme::Text::Color(iced::Color::from_rgb(0.35, 0.55, 0.75))),
+                            text(hint_str).size(11)
+                                .style(iced::theme::Text::Color(hint_color)),
                         ]
                         .into()
                     );
@@ -291,11 +302,22 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
                     } else {
                         0.0
                     };
+                    let overflow = !(0.0..=1023.0).contains(&adc_est);
+                    let hint_color = if overflow {
+                        iced::Color::from_rgb(0.85, 0.2, 0.2)
+                    } else {
+                        iced::Color::from_rgb(0.35, 0.55, 0.75)
+                    };
+                    let hint_str = if overflow {
+                        format!("≈ {:.0} ADC  ⚠ out of range (0–1023)", adc_est)
+                    } else {
+                        format!("≈ {:.0} ADC", adc_est)
+                    };
                     rows.push(
                         row![
                             iced::widget::Space::with_width(226),
-                            text(format!("≈ {:.0} ADC", adc_est)).size(11)
-                                .style(iced::theme::Text::Color(iced::Color::from_rgb(0.35, 0.55, 0.75))),
+                            text(hint_str).size(11)
+                                .style(iced::theme::Text::Color(hint_color)),
                         ]
                         .into()
                     );

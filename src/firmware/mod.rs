@@ -256,7 +256,7 @@ impl FirmwareConfig {
     /// Try to parse 26 input strings back into a `FirmwareConfig`.
     /// Returns `Err` with index and message of the first field that fails to parse.
     pub fn try_from_inputs(inputs: &[String]) -> Result<Self, (usize, String)> {
-        if inputs.len() < 26 {
+        if inputs.len() < 29 {
             return Err((0, "Not enough parameter inputs".to_string()));
         }
         let pu = |idx: usize| -> Result<u32, (usize, String)> {
@@ -266,8 +266,12 @@ impl FirmwareConfig {
         };
         let ps = |idx: usize| -> Result<i32, (usize, String)> {
             let s = inputs[idx].trim();
-            s.parse::<i32>()
-                .map_err(|_| (idx, format!("'{}' is not a valid integer", inputs[idx])))
+            let v = s.parse::<i32>()
+                .map_err(|_| (idx, format!("'{}' is not a valid integer", inputs[idx])))?;
+            if v < i16::MIN as i32 || v > i16::MAX as i32 {
+                return Err((idx, format!("{} is out of the 16-bit signed range (-32768 to 32767)", v)));
+            }
+            Ok(v)
         };
         let pb = |idx: usize| -> Result<bool, (usize, String)> {
             let s = inputs[idx].trim().to_lowercase();
@@ -284,7 +288,11 @@ impl FirmwareConfig {
             let g: f64 = inputs[9].trim().parse::<f64>().unwrap_or(0.0);
             let r: f64 = inputs[10].trim().parse::<f64>().unwrap_or(0.0);
             if g > 0.0 && r > 0.0 {
-                Ok((a * g * r / (0.004888 * 1_000_000.0)).round() as u32)
+                let adc = (a * g * r / (0.004888 * 1_000_000.0)).round();
+                if !(0.0..=1023.0).contains(&adc) {
+                    return Err((idx, format!("{:.3} A maps to {:.0} ADC which is outside the valid range (0–1023)", a, adc)));
+                }
+                Ok(adc as u32)
             } else {
                 Err((idx, "Cannot convert to ADC: Bus Current Gain or Sense Resistor is zero".to_string()))
             }
@@ -296,7 +304,11 @@ impl FirmwareConfig {
             let rt: f64 = inputs[24].trim().parse::<f64>().unwrap_or(0.0);
             let rb: f64 = inputs[25].trim().parse::<f64>().unwrap_or(0.0);
             if rb > 0.0 {
-                Ok((v * rb / (rt + rb) / 5.0 * 1023.0).round() as u32)
+                let adc = (v * rb / (rt + rb) / 5.0 * 1023.0).round();
+                if !(0.0..=1023.0).contains(&adc) {
+                    return Err((idx, format!("{:.2} V maps to {:.0} ADC which is outside the valid range (0–1023)", v, adc)));
+                }
+                Ok(adc as u32)
             } else {
                 Err((idx, "Cannot convert to ADC: VBUS resistor values are invalid".to_string()))
             }
@@ -329,7 +341,7 @@ impl FirmwareConfig {
             pid_output_max:            pu(23)?,
             vbus_rtop:                 pu(24)?,
             vbus_rbottom:              pu(25)?,
-            vbus_min_threshold:        if inputs.len() > 26 { pv_to_adc(26)? } else { 96 },
+            vbus_min_threshold:        pv_to_adc(26)?,
             wait_for_board:            pb(27)?,
             remote_debug_mode:         pb(28)?,
         })
