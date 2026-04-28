@@ -225,12 +225,12 @@ impl FirmwareConfig {
             self.pid_k_i.to_string(),
             b(self.pid_k_d_enable),
             self.pid_k_d.to_string(),
+            self.pid_max_i_term.to_string(),
+            self.pid_output_max.to_string(),
             self.vbus_rtop.to_string(),
             self.vbus_rbottom.to_string(),
             b(self.wait_for_board),
             b(self.remote_debug_mode),
-            self.pid_max_i_term.to_string(),
-            self.pid_output_max.to_string(),
             self.vbus_min_threshold.to_string(),
         ]
     }
@@ -283,12 +283,12 @@ impl FirmwareConfig {
             pid_k_i:                   ps(19)?,
             pid_k_d_enable:            pb(20)?,
             pid_k_d:                   ps(21)?,
-            vbus_rtop:                 pu(22)?,
-            vbus_rbottom:              pu(23)?,
-            wait_for_board:            pb(24)?,
-            remote_debug_mode:         pb(25)?,
-            pid_max_i_term:            if inputs.len() > 26 { pu(26)? } else { 100000 },
-            pid_output_max:            if inputs.len() > 27 { pu(27)? } else { 200 },
+            pid_max_i_term:            pu(22)?,
+            pid_output_max:            pu(23)?,
+            vbus_rtop:                 pu(24)?,
+            vbus_rbottom:              pu(25)?,
+            wait_for_board:            pb(26)?,
+            remote_debug_mode:         pb(27)?,
             vbus_min_threshold:        if inputs.len() > 28 { pu(28)? } else { 96 },
         })
     }
