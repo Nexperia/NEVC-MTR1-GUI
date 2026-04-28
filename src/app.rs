@@ -1212,15 +1212,12 @@ impl Application for NevcApp {
                 if let Some(slot) = self.fw_param_inputs.get_mut(idx) {
                     *slot = value;
                 }
-                // Live validation: run try_from_inputs and update per-field errors
-                match crate::firmware::FirmwareConfig::try_from_inputs(&self.fw_param_inputs) {
-                    Ok(_) => {
-                        for e in &mut self.fw_param_errors { *e = None; }
-                    }
-                    Err((err_idx, msg)) => {
-                        for (i, e) in self.fw_param_errors.iter_mut().enumerate() {
-                            *e = if i == err_idx { Some(msg.clone()) } else { None };
-                        }
+                // Live validation: run validate_inputs_all to update per-field errors simultaneously
+                let errs = crate::firmware::FirmwareConfig::validate_inputs_all(&self.fw_param_inputs);
+                for e in &mut self.fw_param_errors { *e = None; }
+                for (err_idx, msg) in errs {
+                    if let Some(slot) = self.fw_param_errors.get_mut(err_idx) {
+                        *slot = Some(msg);
                     }
                 }
                 Command::none()

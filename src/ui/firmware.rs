@@ -56,8 +56,8 @@ pub const PARAMS: &[ParamMeta] = &[
     ParamMeta { label: "Bus Current Gain",       unit: "",    help: "Amplifier gain of the hi-side bus current sense circuit (NEVB-MTR1-C-1 default: 50).",   kind: ParamKind::UInt },
     ParamMeta { label: "Bus Sense Resistor",     unit: "\u{b5}Ohm",help: "Bus current sense shunt resistor value in micro-ohms (NEVB-MTR1-C-1 default: 4000 \u{b5}\u{3a9}).", kind: ParamKind::UInt },
     ParamMeta { label: "Bus Warn Threshold",     unit: "A",   help: "Bus current level at which a warning is flagged. Enter the physical current in amperes; the ADC equivalent is shown below.", kind: ParamKind::Float },
-    ParamMeta { label: "Bus Error Threshold",    unit: "A",   help: "Bus current level at which an error is triggered (and PWM disabled if Bus Fault Enable is TRUE). Enter in amperes; ADC equivalent shown below.", kind: ParamKind::Float },
     ParamMeta { label: "Bus Fault Enable",       unit: "",    help: "When TRUE, all PWM outputs are disabled immediately when bus current exceeds the error threshold.", kind: ParamKind::Bool },
+    ParamMeta { label: "Bus Error Threshold",    unit: "A",   help: "Bus current level at which an error is triggered (and PWM disabled if Bus Fault Enable is TRUE). Enter in amperes; ADC equivalent shown below.", kind: ParamKind::Float },
     // --- Speed Control ---
     ParamMeta { label: "Speed Control Method",   unit: "",    help: "OPEN LOOP: speed set by duty cycle directly. CLOSED LOOP: speed regulated by PID controller using hall sensor feedback.", kind: ParamKind::SpeedControlMethod },
     ParamMeta { label: "Speed Loop Time Base",   unit: "ticks",help: "Number of PWM ticks between each speed-loop iteration. Valid range: 1\u{2013}255 ticks.", kind: ParamKind::UInt },
@@ -144,6 +144,10 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
         .get(3)
         .map(|v| v == "true" || v == "1")
         .unwrap_or(false);
+    let bus_fault_enable_on = app.fw_param_inputs
+        .get(12)  // Bus Fault Enable is at index 12
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(true);
 
     let mut param_groups: Vec<Element<Message>> = Vec::new();
 
@@ -169,7 +173,7 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
             let meta = &PARAMS[idx];
             let input_val = app.fw_param_inputs.get(idx).map(|s| s.as_str()).unwrap_or("");
             // idx 4 (Emulated Motor Freq) only active when Emulate Hall is TRUE
-            let param_dimmed = group_dimmed || (idx == 4 && !emulate_hall_on);
+            let param_dimmed = group_dimmed || (idx == 4 && !emulate_hall_on) || (idx == 13 && !bus_fault_enable_on);
 
             let dim_color = iced::Color::from_rgb(0.6, 0.6, 0.6);
             let label_text = if param_dimmed {
@@ -271,7 +275,7 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
             rows.push(iced::widget::Space::with_height(4).into());
 
             // ADC estimate for bus current threshold params (enter A, show ADC)
-            if idx == 11 || idx == 12 {
+            if idx == 11 || idx == 13 {
                 let a_val: Option<f64> = input_val.trim().parse::<f64>().ok();
                 let gain: Option<f64> = app.fw_param_inputs.get(9)
                     .and_then(|s| s.trim().parse::<f64>().ok());

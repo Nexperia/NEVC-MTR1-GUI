@@ -233,8 +233,8 @@ impl FirmwareConfig {
             self.ibus_gain.to_string(),
             self.ibus_sense_resistor.to_string(),
             adc_to_a(self.ibus_warning_threshold),
-            adc_to_a(self.ibus_error_threshold),
             b(self.ibus_fault_enable),
+            adc_to_a(self.ibus_error_threshold),
             self.speed_control_method.to_string(),
             self.speed_controller_time_base.to_string(),
             self.speed_controller_max_delta.to_string(),
@@ -260,13 +260,15 @@ impl FirmwareConfig {
             return Err((0, "Not enough parameter inputs".to_string()));
         }
         let pu = |idx: usize| -> Result<u32, (usize, String)> {
-            inputs[idx].trim().parse::<u32>().map_err(|_| {
-                (idx, format!("'{}' is not a valid unsigned integer", inputs[idx]))
-            })
+            let s = inputs[idx].trim();
+            if s.is_empty() { return Err((idx, "Cannot be empty".to_string())); }
+            s.parse::<u32>().map_err(|_| (idx, format!("'{}' is not a valid unsigned integer", s)))
         };
         let pu_range = |idx: usize, lo: u32, hi: u32| -> Result<u32, (usize, String)> {
-            let v = inputs[idx].trim().parse::<u32>().map_err(|_| {
-                (idx, format!("'{}' is not a valid unsigned integer", inputs[idx]))
+            let s = inputs[idx].trim();
+            if s.is_empty() { return Err((idx, "Cannot be empty".to_string())); }
+            let v = s.parse::<u32>().map_err(|_| {
+                (idx, format!("'{}' is not a valid unsigned integer", s))
             })?;
             if v < lo || v > hi {
                 return Err((idx, format!("{} is out of the valid range ({}\u{2013}{})", v, lo, hi)));
@@ -275,8 +277,9 @@ impl FirmwareConfig {
         };
         let ps = |idx: usize| -> Result<i32, (usize, String)> {
             let s = inputs[idx].trim();
+            if s.is_empty() { return Err((idx, "Cannot be empty".to_string())); }
             let v = s.parse::<i32>()
-                .map_err(|_| (idx, format!("'{}' is not a valid integer", inputs[idx])))?;
+                .map_err(|_| (idx, format!("'{}' is not a valid integer", s)))?;
             if v < i16::MIN as i32 || v > i16::MAX as i32 {
                 return Err((idx, format!("{} is out of the 16-bit signed range (-32768 to 32767)", v)));
             }
@@ -292,8 +295,10 @@ impl FirmwareConfig {
         };
         // Convert A → ADC for bus current thresholds using gain (idx 9) and resistor (idx 10)
         let pa_to_adc = |idx: usize| -> Result<u32, (usize, String)> {
-            let a: f64 = inputs[idx].trim().parse::<f64>()
-                .map_err(|_| (idx, format!("'{}' is not a valid number", inputs[idx])))?;
+            let s = inputs[idx].trim();
+            if s.is_empty() { return Err((idx, "Cannot be empty".to_string())); }
+            let a: f64 = s.parse::<f64>()
+                .map_err(|_| (idx, format!("'{}' is not a valid number", s)))?;
             let g: f64 = inputs[9].trim().parse::<f64>().unwrap_or(0.0);
             let r: f64 = inputs[10].trim().parse::<f64>().unwrap_or(0.0);
             if g > 0.0 && r > 0.0 {
@@ -308,8 +313,10 @@ impl FirmwareConfig {
         };
         // Convert V → ADC for VBUS threshold using rtop (idx 24) and rbottom (idx 25)
         let pv_to_adc = |idx: usize| -> Result<u32, (usize, String)> {
-            let v: f64 = inputs[idx].trim().parse::<f64>()
-                .map_err(|_| (idx, format!("'{}' is not a valid number", inputs[idx])))?;
+            let s = inputs[idx].trim();
+            if s.is_empty() { return Err((idx, "Cannot be empty".to_string())); }
+            let v: f64 = s.parse::<f64>()
+                .map_err(|_| (idx, format!("'{}' is not a valid number", s)))?;
             let rt: f64 = inputs[24].trim().parse::<f64>().unwrap_or(0.0);
             let rb: f64 = inputs[25].trim().parse::<f64>().unwrap_or(0.0);
             if rb > 0.0 {
@@ -342,8 +349,8 @@ impl FirmwareConfig {
             ibus_gain:                 pu(9)?,
             ibus_sense_resistor:       pu(10)?,
             ibus_warning_threshold:    pa_to_adc(11)?,
-            ibus_error_threshold:      pa_to_adc(12)?,
-            ibus_fault_enable:         pb(13)?,
+            ibus_fault_enable:         pb(12)?,
+            ibus_error_threshold:      pa_to_adc(13)?,
             speed_control_method:      pu_range(14, 0, 1)?,
             speed_controller_time_base: pu_range(15, 1, 255)?,
             speed_controller_max_delta: pu_range(16, 1, 65535)?,
@@ -360,6 +367,112 @@ impl FirmwareConfig {
             wait_for_board:            pb(27)?,
             remote_debug_mode:         pb(28)?,
         })
+    }
+
+    /// Validate all inputs independently, returning ALL errors found (not just the first).
+    /// Used for live per-field UI feedback.
+    pub fn validate_inputs_all(inputs: &[String]) -> Vec<(usize, String)> {
+        if inputs.len() < 29 {
+            return vec![(0, "Not enough parameter inputs".to_string())];
+        }
+        let mut errors: Vec<(usize, String)> = Vec::new();
+
+        macro_rules! check {
+            ($result:expr) => {
+                if let Err(e) = $result { errors.push(e); }
+            };
+        }
+
+        let pu = |idx: usize| -> Result<u32, (usize, String)> {
+            let s = inputs[idx].trim();
+            if s.is_empty() { return Err((idx, "Cannot be empty".to_string())); }
+            s.parse::<u32>().map_err(|_| (idx, format!("'{}' is not a valid unsigned integer", s)))
+        };
+        let pu_range = |idx: usize, lo: u32, hi: u32| -> Result<u32, (usize, String)> {
+            let s = inputs[idx].trim();
+            if s.is_empty() { return Err((idx, "Cannot be empty".to_string())); }
+            let v = s.parse::<u32>().map_err(|_| (idx, format!("'{}' is not a valid unsigned integer", s)))?;
+            if v < lo || v > hi {
+                return Err((idx, format!("{} is out of the valid range ({}\u{2013}{})", v, lo, hi)));
+            }
+            Ok(v)
+        };
+        let ps = |idx: usize| -> Result<i32, (usize, String)> {
+            let s = inputs[idx].trim();
+            if s.is_empty() { return Err((idx, "Cannot be empty".to_string())); }
+            let v = s.parse::<i32>().map_err(|_| (idx, format!("'{}' is not a valid integer", s)))?;
+            if v < i16::MIN as i32 || v > i16::MAX as i32 {
+                return Err((idx, format!("{} is out of the 16-bit signed range (-32768 to 32767)", v)));
+            }
+            Ok(v)
+        };
+        let pa_to_adc = |idx: usize| -> Result<u32, (usize, String)> {
+            let s = inputs[idx].trim();
+            if s.is_empty() { return Err((idx, "Cannot be empty".to_string())); }
+            let a: f64 = s.parse::<f64>().map_err(|_| (idx, format!("'{}' is not a valid number", s)))?;
+            let g: f64 = inputs[9].trim().parse::<f64>().unwrap_or(0.0);
+            let r: f64 = inputs[10].trim().parse::<f64>().unwrap_or(0.0);
+            if g > 0.0 && r > 0.0 {
+                let adc = (a * g * r / (0.004888 * 1_000_000.0)).round();
+                if !(0.0..=1023.0).contains(&adc) {
+                    return Err((idx, format!("{:.3} A maps to {:.0} ADC which is outside the valid range (0\u{2013}1023)", a, adc)));
+                }
+                Ok(adc as u32)
+            } else {
+                Err((idx, "Cannot convert to ADC: Bus Current Gain or Sense Resistor is zero".to_string()))
+            }
+        };
+        let pv_to_adc = |idx: usize| -> Result<u32, (usize, String)> {
+            let s = inputs[idx].trim();
+            if s.is_empty() { return Err((idx, "Cannot be empty".to_string())); }
+            let v: f64 = s.parse::<f64>().map_err(|_| (idx, format!("'{}' is not a valid number", s)))?;
+            let rt: f64 = inputs[24].trim().parse::<f64>().unwrap_or(0.0);
+            let rb: f64 = inputs[25].trim().parse::<f64>().unwrap_or(0.0);
+            if rb > 0.0 {
+                let adc = (v * rb / (rt + rb) / 5.0 * 1023.0).round();
+                if !(0.0..=1023.0).contains(&adc) {
+                    return Err((idx, format!("{:.2} V maps to {:.0} ADC which is outside the valid range (0\u{2013}1023)", v, adc)));
+                }
+                Ok(adc as u32)
+            } else {
+                Err((idx, "Cannot convert to ADC: VBUS resistor values are invalid".to_string()))
+            }
+        };
+
+        // Motor
+        check!(pu_range(0, 2, 256).and_then(|v| {
+            if v % 2 != 0 {
+                Err((0, format!("{} is not a valid pole count \u{2014} must be an even number", v)))
+            } else { Ok(v) }
+        }));
+        check!(pu_range(1, 7183, 100_000));
+        check!(pu_range(2, 350, 1875));
+        check!(pu_range(4, 1, 1000));
+        check!(pu_range(5, 1, 65535));
+        // Phase current
+        check!(pu(7));
+        check!(pu(8));
+        // Bus current (idx 12 = Bus Fault Enable bool — button only, skip; idx 13 = Error Threshold)
+        check!(pu(9));
+        check!(pu(10));
+        check!(pa_to_adc(11));
+        check!(pa_to_adc(13));
+        // Speed control
+        check!(pu_range(15, 1, 255));
+        check!(pu_range(16, 1, 65535));
+        check!(pu_range(17, 1, 65535));
+        // PID
+        check!(ps(18));
+        check!(ps(19));
+        check!(ps(21));
+        check!(pu(22));
+        check!(pu(23));
+        // VBUS
+        check!(pu(24));
+        check!(pu(25));
+        check!(pv_to_adc(26));
+
+        errors
     }
 }
 
