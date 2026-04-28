@@ -249,6 +249,32 @@ pub fn view(app: &NevcApp) -> Element<'_, Message> {
             rows.push(param_row.into());
             rows.push(iced::widget::Space::with_height(4).into());
 
+            // Amps hint for bus current threshold params (indices 11 and 12)
+            if idx == 11 || idx == 12 {
+                let adc_val: Option<f64> = input_val.trim().parse::<f64>().ok();
+                let gain: Option<f64> = app.fw_param_inputs.get(9)
+                    .and_then(|s| s.trim().parse::<f64>().ok());
+                let resistor_uohm: Option<f64> = app.fw_param_inputs.get(10)
+                    .and_then(|s| s.trim().parse::<f64>().ok());
+
+                if let (Some(adc), Some(g), Some(r)) = (adc_val, gain, resistor_uohm) {
+                    let current_a = if g > 0.0 && r > 0.0 {
+                        adc * 0.004888 * 1_000_000.0 / (g * r)
+                    } else {
+                        0.0
+                    };
+                    rows.push(
+                        row![
+                            iced::widget::Space::with_width(226),
+                            text(format!("≈ {:.2} A", current_a)).size(11)
+                                .style(iced::theme::Text::Color(iced::Color::from_rgb(0.35, 0.55, 0.75))),
+                        ]
+                        .into()
+                    );
+                    rows.push(iced::widget::Space::with_height(2).into());
+                }
+            }
+
             // Emulate Hall safety warning (idx 3)
             if idx == 3 {
                 let is_on = input_val == "true";
